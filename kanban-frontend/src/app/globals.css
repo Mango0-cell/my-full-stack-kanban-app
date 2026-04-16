@@ -1,0 +1,169 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "../styles/design-tokens.css";
+@import "tailwindcss";
+
+/* ── Shadcn dark-mode token overrides ── */
+:root {
+  --background: var(--color-surface-0);
+  --foreground: var(--color-text-primary);
+  --card: var(--color-surface-2);
+  --card-foreground: var(--color-text-primary);
+  --popover: #0d1017;
+  --popover-foreground: var(--color-text-primary);
+  --primary: var(--color-brand-500);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-surface-3);
+  --secondary-foreground: var(--color-text-primary);
+  --muted: var(--color-surface-1);
+  --muted-foreground: var(--color-text-secondary);
+  --accent: var(--color-surface-3);
+  --accent-foreground: var(--color-text-primary);
+  --destructive: var(--color-danger);
+  --destructive-foreground: #fecaca;
+  --border: var(--color-border);
+  --input: rgba(255, 255, 255, 0.05);
+  --ring: var(--color-brand-400);
+  --radius: 0.375rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: 'Plus Jakarta Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* ── Board scrollbar (thin, dark) ── */
+.kanban-scroll::-webkit-scrollbar { height: 4px; width: 4px; }
+.kanban-scroll::-webkit-scrollbar-track { background: transparent; }
+.kanban-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+.kanban-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ── Auth page custom classes ── */
+.kf-mono-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.kf-glass-panel {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+}
+
+.kf-auth-field {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.25s var(--ease-smooth);
+}
+
+.kf-auth-field:focus-within {
+  border-color: var(--color-brand-500);
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.kf-mesh-gradient {
+  background:
+    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.08) 0, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(129, 140, 248, 0.05) 0, transparent 50%);
+}
+
+.kf-inner-glow {
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+}
+
+.kf-btn {
+  transition: all 0.15s var(--ease-out);
+}
+.kf-btn:hover { filter: brightness(1.1); }
+.kf-btn:active { transform: scale(0.97); }
+
+/* ── Board card ── */
+.kf-card {
+  background: var(--color-surface-2);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  padding: 1rem;
+  cursor: grab;
+  box-shadow: var(--shadow-card);
+  transition: all 200ms var(--ease-smooth);
+}
+.kf-card:hover {
+  background: var(--color-surface-3);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+.kf-card:active { cursor: grabbing; }
+.kf-card--active {
+  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: var(--shadow-drag);
+}
+
+/* ── Column ── */
+.kf-column {
+  background: var(--color-surface-1);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  transition: all 200ms var(--ease-smooth);
+}
+.kf-column--drop-active {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1.5px dashed rgba(99, 102, 241, 0.4);
+}
+
+/* ── Icon button ── */
+.kf-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  background: var(--color-surface-3);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  transition: all 150ms var(--ease-out);
+}
+.kf-icon-btn:hover {
+  background: var(--color-surface-4);
+  color: var(--color-text-primary);
+}
+
+/* ── Float animation ── */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+/* ── Shimmer skeleton ── */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+.shimmer {
+  background: linear-gradient(90deg,
+    var(--color-surface-2) 25%,
+    var(--color-surface-3) 50%,
+    var(--color-surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
