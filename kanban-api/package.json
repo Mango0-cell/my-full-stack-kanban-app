@@ -2,11 +2,11 @@
   "name": "kanban-api",
   "version": "1.0.0",
   "description": "",
-  "main": "dist/app.js",
+  "main": "dist/app.ts",
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec ts-node src/app.ts",
     "build": "tsc",
-    "start": "node dist/app.js",
+    "start": "node dist/app.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   }, 
   "keywords": [],
