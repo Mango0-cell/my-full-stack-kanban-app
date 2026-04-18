@@ -6,6 +6,7 @@ import React, {
   useCallback,
 } from "react";
 import { gsap } from "gsap";
+import { MousePointer2, Zap, BarChart2, FileText, Settings, Shield } from "lucide-react";
 
 export interface BentoCardProps {
   color?: string;
@@ -14,6 +15,9 @@ export interface BentoCardProps {
   label?: string;
   textAutoHide?: boolean;
   disableAnimations?: boolean;
+  icon?: React.ElementType;
+  iconColor?: string;
+  accentColor?: string;
 }
 
 export interface BentoProps {
@@ -37,42 +41,12 @@ const DEFAULT_GLOW_COLOR = "99, 102, 241";
 const MOBILE_BREAKPOINT = 768;
 
 const defaultCardData: BentoCardProps[] = [
-  {
-    color: "#0f1117",
-    title: "Drag & Drop",
-    description: "Move cards fluidly between columns with smooth animations",
-    label: "Board",
-  },
-  {
-    color: "#0f1117",
-    title: "Real-time Sync",
-    description: "Changes propagate instantly to every team member",
-    label: "Collaboration",
-  },
-  {
-    color: "#0f1117",
-    title: "Smart Analytics",
-    description: "Track velocity, cycle time, and team performance metrics",
-    label: "Insights",
-  },
-  {
-    color: "#0f1117",
-    title: "Rich Cards",
-    description: "Markdown editor, file attachments, comments, custom fields",
-    label: "Cards",
-  },
-  {
-    color: "#0f1117",
-    title: "Automations",
-    description: "Set triggers and actions to eliminate repetitive work",
-    label: "Workflow",
-  },
-  {
-    color: "#0f1117",
-    title: "Enterprise SSO",
-    description: "SAML, custom roles, audit logs for large teams",
-    label: "Security",
-  },
+  { color: '#0d1120', title: 'Drag & Drop', description: 'Move cards fluidly across columns with buttery smooth animations', label: 'Board', icon: MousePointer2, iconColor: '#818cf8', accentColor: '#6366f1' },
+  { color: '#0d1120', title: 'Real-time Sync', description: 'Changes appear instantly for every team member — zero refresh needed', label: 'Collaboration', icon: Zap, iconColor: '#34d399', accentColor: '#10b981' },
+  { color: '#0d1120', title: 'Smart Analytics', description: 'Track velocity, cycle time, and team performance at a glance', label: 'Insights', icon: BarChart2, iconColor: '#f59e0b', accentColor: '#f59e0b' },
+  { color: '#0d1120', title: 'Rich Cards', description: 'Markdown editor, file attachments, comments, and custom fields', label: 'Cards', icon: FileText, iconColor: '#60a5fa', accentColor: '#3b82f6' },
+  { color: '#0d1120', title: 'Automations', description: 'Set triggers and actions to eliminate repetitive tasks', label: 'Workflow', icon: Settings, iconColor: '#c084fc', accentColor: '#a855f7' },
+  { color: '#0d1120', title: 'Enterprise SSO', description: 'SAML, custom roles, and audit logs for large teams', label: 'Security', icon: Shield, iconColor: '#f87171', accentColor: '#ef4444' },
 ];
 
 const createParticleElement = (
@@ -602,7 +576,7 @@ const MagicBento: React.FC<BentoProps> = ({
       >
         <div className="card-responsive">
           {cards.map((card, index) => {
-            const baseClassName = `card flex flex-col justify-between relative aspect-[4/3] min-h-[200px] w-full max-w-full p-5 rounded-[20px] border border-solid font-light overflow-hidden transition-all duration-300 ease-in-out hover:-translate-y-0.5 ${
+            const baseClassName = `card flex flex-col justify-between relative aspect-[4/3] min-h-[240px] w-full max-w-full p-6 rounded-[20px] border border-solid font-light overflow-hidden transition-all duration-300 ease-in-out hover:-translate-y-0.5 ${
               enableBorderGlow ? "card--border-glow" : ""
             }`;
 
@@ -620,7 +594,7 @@ const MagicBento: React.FC<BentoProps> = ({
               return (
                 <ParticleCard
                   key={index}
-                  className={baseClassName}
+                  className={`${baseClassName} group`}
                   style={cardStyle}
                   disableAnimations={shouldDisableAnimations}
                   particleCount={particleCount}
@@ -630,10 +604,16 @@ const MagicBento: React.FC<BentoProps> = ({
                   enableMagnetism={enableMagnetism}
                 >
                   <div className="card__header flex justify-between gap-3 relative text-slate-400">
-                    <span className="card__label text-xs font-mono uppercase tracking-widest">
+                    <span className="card__label text-xs font-mono uppercase tracking-widest" style={{ color: card.iconColor || '#94a3b8' }}>
                       {card.label}
                     </span>
                   </div>
+                  {/* Icon */}
+                  {card.icon && (
+                    <div className="absolute top-4 right-4 opacity-20 group-hover:opacity-40 transition-opacity">
+                      <card.icon style={{ color: card.iconColor || '#818cf8' }} className="w-16 h-16" strokeWidth={1} />
+                    </div>
+                  )}
                   <div className="card__content flex flex-col relative text-white">
                     <h3
                       className={`card__title font-semibold text-base m-0 mb-1 ${
@@ -655,12 +635,18 @@ const MagicBento: React.FC<BentoProps> = ({
             }
 
             return (
-              <div key={index} className={baseClassName} style={cardStyle}>
+              <div key={index} className={`${baseClassName} group`} style={cardStyle}>
                 <div className="card__header flex justify-between gap-3 relative text-slate-400">
-                  <span className="card__label text-xs font-mono uppercase tracking-widest">
+                  <span className="card__label text-xs font-mono uppercase tracking-widest" style={{ color: card.iconColor || '#94a3b8' }}>
                     {card.label}
                   </span>
                 </div>
+                {/* Icon */}
+                {card.icon && (
+                  <div className="absolute top-4 right-4 opacity-20 group-hover:opacity-40 transition-opacity">
+                    <card.icon style={{ color: card.iconColor || '#818cf8' }} className="w-16 h-16" strokeWidth={1} />
+                  </div>
+                )}
                 <div className="card__content flex flex-col relative text-white">
                   <h3
                     className={`card__title font-semibold text-base m-0 mb-1 ${
