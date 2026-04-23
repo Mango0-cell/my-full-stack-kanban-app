@@ -5,23 +5,18 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
-import { Loader2, Trash2, Send, Pencil, X, Check } from 'lucide-react';
+import { Loader2, Trash2, Send, Pencil, X, Check, Archive } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { MarkdownEditor } from '@/components/shared/MarkdownEditor';
 import { useListCommentsQuery, useAddCommentMutation, useDeleteCommentMutation } from '@/lib/store/api/commentsApi';
-import { useUpdateCardMutation, useDeleteCardMutation } from '@/lib/store/api/cardsApi';
+import { useUpdateCardMutation, useDeleteCardMutation, useGetCardQuery } from '@/lib/store/api/cardsApi';
+import { useListColumnsQuery } from '@/lib/store/api/columnsApi';
+import { useListMembersQuery } from '@/lib/store/api/projectsApi';
 import { useAppSelector } from '@/lib/hooks/redux';
 import { selectCurrentUser } from '@/lib/store/slices/authSlice';
 import type { Card } from '@/lib/types/api';
@@ -49,12 +44,25 @@ export function CardDetailModal({ card, projectId, onClose }: CardDetailModalPro
   });
   const comments = commentsData?.data ?? [];
 
+  const { data: membersData } = useListMembersQuery(projectId, { skip: !card });
+  const members = membersData?.data ?? [];
+
+  const { data: columnsData } = useListColumnsQuery(projectId, { skip: !card });
+  const columns = columnsData?.data ?? [];
+
+  const { data: liveCardData } = useGetCardQuery(card?.card_id ?? 0, { skip: !card });
+  const liveCard = liveCardData?.data ?? card;
+
   // Inline edit state
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const [description, setDescription] = useState(card?.description ?? '');
   const [descriptionDirty, setDescriptionDirty] = useState(false);
   const [prevCardId, setPrevCardId] = useState<number | null>(null);
+
+  // Custom priority state
+  const [customPriorityMode, setCustomPriorityMode] = useState(false);
+  const [customPriorityValue, setCustomPriorityValue] = useState('');
 
   const { register, handleSubmit, reset } = useForm<CommentForm>({
     resolver: zodResolver(commentSchema),
@@ -65,6 +73,7 @@ export function CardDetailModal({ card, projectId, onClose }: CardDetailModalPro
     setPrevCardId(card.card_id);
     setDescription(card.description ?? '');
     setDescriptionDirty(false);
+    setCustomPriorityMode(false);
   }
 
   async function handleTitleSave() {
@@ -108,6 +117,23 @@ export function CardDetailModal({ card, projectId, onClose }: CardDetailModalPro
     } catch { toast.error('Failed to delete card'); }
   }
 
+  async function handleCancelCard() {
+    if (!card) return;
+    const columnName = columns.find((c) => c.column_id === card.column_id)?.name ?? 'Unknown';
+    const canceledKey = `kanban_canceled_cards:${currentUser?.user_id ?? 'guest'}:${projectId}`;
+    try {
+      const raw = localStorage.getItem(canceledKey);
+      const existing: Array<{ columnName: string; canceledAt: string; cards: Card[] }> = raw ? JSON.parse(raw) : [];
+      existing.push({ columnName, canceledAt: new Date().toISOString(), cards: [card] });
+      localStorage.setItem(canceledKey, JSON.stringify(existing));
+    } catch { /* ignore localStorage errors */ }
+    try {
+      await deleteCard({ cardId: card.card_id, projectId }).unwrap();
+      toast.success('Card canceled and archived');
+      onClose();
+    } catch { toast.error('Failed to cancel card'); }
+  }
+
   async function onCommentSubmit(data: CommentForm) {
     if (!card) return;
     try {
@@ -122,6 +148,9 @@ export function CardDetailModal({ card, projectId, onClose }: CardDetailModalPro
       await deleteComment({ commentId, cardId: card.card_id }).unwrap();
     } catch { toast.error('Failed to delete comment'); }
   }
+
+  const currentPriority = (liveCard?.priority ?? card?.priority) as string;
+  const isCustomPriority = card ? !(priorityOptions as readonly string[]).includes(currentPriority) : false;
 
   return (
     <Dialog open={!!card} onOpenChange={(v) => !v && onClose()}>
@@ -297,32 +326,98 @@ export function CardDetailModal({ card, projectId, onClose }: CardDetailModalPro
 
               {/* Sidebar metadata */}
               <div className="space-y-4">
+                {/* Assigned to */}
+                <div className="space-y-2">
+                  <label className="text-[11px] font-medium uppercase tracking-widest block"
+                         style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    Assigned to
+                  </label>
+                  <select
+                    value={liveCard?.assigned_user_id ?? ''}
+                    onChange={async (e) => {
+                      const val = e.target.value;
+                      await updateCard({
+                        cardId: card.card_id,
+                        projectId,
+                        assigned_user_id: val ? Number(val) : null,
+                      }).unwrap().catch(() => toast.error('Failed to assign'));
+                    }}
+                    className="w-full h-8 px-2 rounded-md text-xs outline-none"
+                    style={{
+                      backgroundColor: '#0a0a0a',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                  >
+                    <option value="">Unassigned</option>
+                    {members.map((m) => (
+                      <option key={m.user_id} value={m.user_id}>{m.display_name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Priority */}
                 <div className="space-y-2">
                   <label className="text-[11px] font-medium uppercase tracking-widest block"
                          style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
                     Priority
                   </label>
-                  <Select value={card.priority} onValueChange={handlePriorityChange}>
-                    <SelectTrigger
-                      className="h-8 text-xs"
-                      style={{
-                        backgroundColor: 'var(--color-surface-4)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        color: 'var(--color-text-primary)',
-                      }}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent
-                      style={{
-                        border: '1px solid rgba(255,255,255,0.08)',
-                      }}
-                    >
-                      {priorityOptions.map((p) => (
-                        <SelectItem key={p} value={p} className="text-xs capitalize">{p}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+
+                  {customPriorityMode ? (
+                    /* Custom text input */
+                    <div className="flex gap-1">
+                      <input
+                        autoFocus
+                        value={customPriorityValue}
+                        onChange={e => setCustomPriorityValue(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            const trimmed = customPriorityValue.trim();
+                            if (trimmed && trimmed !== currentPriority) handlePriorityChange(trimmed);
+                            setCustomPriorityMode(false);
+                          }
+                          if (e.key === 'Escape') setCustomPriorityMode(false);
+                        }}
+                        placeholder="e.g. blocker"
+                        className="flex-1 h-8 px-2 rounded-md text-xs outline-none"
+                        style={{ backgroundColor: '#0a0a0a', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-text-primary)' }}
+                      />
+                      <button
+                        onClick={() => {
+                          const trimmed = customPriorityValue.trim();
+                          if (trimmed && trimmed !== currentPriority) handlePriorityChange(trimmed);
+                          setCustomPriorityMode(false);
+                        }}
+                        className="h-8 px-2 rounded-md text-xs font-medium"
+                        style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
+                      >OK</button>
+                    </div>
+                  ) : (
+                    /* Native select — reliable, consistent with Assigned To */
+                    <div className="flex items-center gap-1">
+                      <select
+                        value={isCustomPriority ? '__custom__' : currentPriority}
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (val === '__custom__' || val === '__custom_edit__') {
+                            setCustomPriorityMode(true);
+                            setCustomPriorityValue(isCustomPriority ? currentPriority : '');
+                          } else {
+                            handlePriorityChange(val);
+                          }
+                        }}
+                        className="flex-1 h-8 px-2 rounded-md text-xs outline-none capitalize"
+                        style={{ backgroundColor: '#0a0a0a', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-text-primary)' }}
+                      >
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                        {isCustomPriority && <option value="__custom__">{currentPriority}</option>}
+                        <option value="__custom_edit__">{isCustomPriority ? 'Edit custom...' : 'Custom...'}</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">
@@ -339,23 +434,25 @@ export function CardDetailModal({ card, projectId, onClose }: CardDetailModalPro
                       color: 'var(--color-text-primary)',
                       colorScheme: 'dark',
                     }}
-                    defaultValue={card.due_date ? card.due_date.split('T')[0] : ''}
-                    onBlur={(e) => handleDueDateChange(e.target.value)}
+                    value={liveCard?.due_date ? liveCard.due_date.split('T')[0] : ''}
+                    onChange={(e) => handleDueDateChange(e.target.value)}
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[11px] font-medium uppercase tracking-widest block"
-                         style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-                    Status
-                  </label>
-                  <span className="inline-block px-2 py-0.5 rounded text-xs font-medium"
-                        style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-secondary)' }}>
-                    Card #{card.card_id}
-                  </span>
-                </div>
-
                 <div style={{ borderTop: '1px solid var(--color-border)' }} />
+
+                <button
+                  onClick={handleCancelCard}
+                  disabled={deleting}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all active:scale-95 disabled:opacity-50"
+                  style={{
+                    backgroundColor: 'rgba(245,158,11,0.1)',
+                    color: '#fbbf24',
+                    border: '1px solid rgba(245,158,11,0.2)',
+                  }}
+                >
+                  <Archive className="h-3.5 w-3.5" />Cancel card
+                </button>
 
                 <button
                   onClick={handleDeleteCard}

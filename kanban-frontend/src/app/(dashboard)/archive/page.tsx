@@ -1,34 +1,38 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { FolderKanban, Calendar, ArchiveRestore } from 'lucide-react';
 import { PixelDino } from '@/components/shared/PixelDino';
 import { useListProjectsQuery } from '@/lib/store/api/projectsApi';
+import { useGetMeQuery } from '@/lib/store/api/authApi';
 
 export default function ArchivePage() {
   const router = useRouter();
   const { data, isLoading } = useListProjectsQuery();
+  const { data: meData } = useGetMeQuery();
+  const me = meData?.data;
   const projects = data?.data ?? [];
+  const archiveKey = `kanban_archived_projects:${me?.user_id ?? 'guest'}`;
 
-  const [archivedIds, setArchivedIds] = useState<number[]>([]);
-
-  useEffect(() => {
+  const [storageVersion, setStorageVersion] = useState(0);
+  const archivedIds: number[] = (() => {
     try {
-      const stored = localStorage.getItem('kanban_archived_projects');
-      if (stored) setArchivedIds(JSON.parse(stored));
+      void storageVersion;
+      const stored = localStorage.getItem(archiveKey);
+      return stored ? JSON.parse(stored) : [];
     } catch {
-      // ignore parse errors
+      return [];
     }
-  }, []);
+  })();
 
   const archivedProjects = projects.filter((p) => archivedIds.includes(p.project_id));
 
   function handleUnarchive(projectId: number) {
     const updated = archivedIds.filter((id) => id !== projectId);
-    setArchivedIds(updated);
-    localStorage.setItem('kanban_archived_projects', JSON.stringify(updated));
+    localStorage.setItem(archiveKey, JSON.stringify(updated));
+    setStorageVersion((prev) => prev + 1);
     toast.success('Project unarchived');
   }
 

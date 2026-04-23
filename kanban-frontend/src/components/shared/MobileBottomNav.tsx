@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { FolderKanban, Users, Archive, User } from 'lucide-react';
+import { FolderKanban, Users, Archive, User, MessageCircle } from 'lucide-react';
 
 const navItems = [
   { label: 'Projects', icon: FolderKanban, href: '/board' },
   { label: 'Members',  icon: Users,        href: '/members' },
+  { label: 'Messages', icon: MessageCircle, href: '/chats' },
   { label: 'Archive',  icon: Archive,      href: '/archive' },
   { label: 'Profile',  icon: User,         href: '/profile' },
 ];
@@ -29,6 +30,7 @@ export function MobileBottomNav() {
         const active =
           item.label === 'Projects' ? pathname?.startsWith('/board') :
           item.label === 'Members'  ? pathname === '/members' || pathname === '/settings' :
+          item.label === 'Messages' ? pathname?.startsWith('/chats') :
           item.label === 'Archive'  ? pathname === '/archive' :
           item.label === 'Profile'  ? pathname === '/profile' :
           false;

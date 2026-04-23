@@ -9,9 +9,9 @@ import {
   Terminal,
   Brain,
   Archive,
+  MessageCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
-import { Skeleton } from '@/components/ui/skeleton';
 import { useListProjectsQuery } from '@/lib/store/api/projectsApi';
 import { useGetMeQuery } from '@/lib/store/api/authApi';
 import { CreateProjectDialog } from '@/components/forms/CreateProjectDialog';
@@ -20,6 +20,7 @@ const navItems = [
   { label: 'All Projects', icon: FolderKanban, href: '/board' },
   { label: 'Members',      icon: Users,        href: '/members' },
   { label: 'Integrations', icon: Terminal,      href: '/integrations' },
+  { label: 'Messages', icon: MessageCircle,      href: '/chats' },
   { label: 'Code Optimizer', icon: Brain,       href: '/optimizer' },
   { label: 'Archive',      icon: Archive,       href: '/archive' },
 ];
@@ -37,7 +38,7 @@ export function Sidebar() {
   const archivedIds: number[] = (() => {
     if (typeof window === 'undefined') return [];
     try {
-      const stored = localStorage.getItem('kanban_archived_projects');
+      const stored = localStorage.getItem(`kanban_archived_projects:${user?.user_id ?? 'guest'}`);
       return stored ? JSON.parse(stored) : [];
     } catch { return []; }
   })();
@@ -84,6 +85,8 @@ export function Sidebar() {
         {navItems.map((item) => {
           const isActive = item.href === '/board'
             ? pathname?.startsWith('/board')
+            : item.href === '/chats'
+              ? pathname?.startsWith('/chats')
             : pathname === item.href;
           const Icon = item.icon;
           return (

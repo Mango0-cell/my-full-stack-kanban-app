@@ -10,7 +10,8 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  closestCorners,
+  pointerWithin,
+  rectIntersection,
 } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { Plus, Loader2 } from 'lucide-react';
@@ -35,7 +36,7 @@ interface BoardDnDProps {
   onCardClick: (card: Card) => void;
   onAddColumn: () => void;
   onEditColumn: (column: Column) => void;
-  onDeleteColumn: (column: Column) => void;
+  onCancelColumn: (column: Column) => void;
   filterMode?: FilterMode;
   searchQuery?: string;
 }
@@ -46,7 +47,7 @@ export function BoardDnD({
   onCardClick,
   onAddColumn,
   onEditColumn,
-  onDeleteColumn,
+  onCancelColumn,
   filterMode = 'all',
   searchQuery = '',
 }: BoardDnDProps) {
@@ -63,8 +64,6 @@ export function BoardDnD({
   const isDraggingRef = useRef(false);
 
   // Reset localCards when API data changes and no drag is in progress.
-  // This ensures newly created/deleted cards from RTK Query refetches
-  // are always reflected, even if localCards was somehow left stale.
   useEffect(() => {
     if (!isDraggingRef.current) {
       setLocalCards(null);
@@ -115,10 +114,25 @@ export function BoardDnD({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
+  const collisionDetectionStrategy = useCallback(
+    (args: Parameters<typeof pointerWithin>[0]) => {
+      // First try pointer-within for precise targeting
+      const pointerCollisions = pointerWithin(args);
+      if (pointerCollisions.length > 0) return pointerCollisions;
+      // Fall back to rect intersection
+      return rectIntersection(args);
+    },
+    [],
+  );
+
   function getCardsForColumn(columnId: number) {
-    return filteredCards
-      .filter((c) => c.column_id === columnId)
-      .sort((a, b) => a.position - b.position);
+    const cards = filteredCards.filter((c) => c.column_id === columnId);
+    // Only sort by position at rest — during drag, array order from
+    // localCards (set by arrayMove) already reflects the visual position
+    if (!localCards) {
+      cards.sort((a, b) => a.position - b.position);
+    }
+    return cards;
   }
 
   function onDragStart({ active }: DragStartEvent) {
@@ -190,10 +204,17 @@ export function BoardDnD({
       return;
     }
 
-    const columnCards = cards
-      .filter((c) => c.column_id === movedCard.column_id)
-      .sort((a, b) => a.position - b.position);
-    const newPosition = columnCards.findIndex((c) => c.card_id === movedCard.card_id) + 1;
+    const columnCards = (localCards ?? allCards)
+      .filter((c) => c.column_id === movedCard.column_id);
+    // array order from localCards already reflects visual position; do NOT sort by .position
+
+    let newPosition = columnCards.findIndex((c) => c.card_id === movedCard.card_id);
+    if (newPosition === -1) newPosition = 0; // guard for card not found
+
+    // If only card in column (dropped onto empty column), ensure position is 0
+    if (columnCards.length === 1) {
+      newPosition = 0;
+    }
 
     try {
       await moveCard({
@@ -217,9 +238,9 @@ export function BoardDnD({
     [columns, projectId, updateColumn],
   );
 
-  const handleDeleteColumn = useCallback(
-    (column: Column) => onDeleteColumn(column),
-    [onDeleteColumn],
+  const handleCancelColumn = useCallback(
+    (column: Column) => onCancelColumn(column),
+    [onCancelColumn],
   );
 
   const handleMoveColumn = useCallback(
@@ -255,7 +276,7 @@ export function BoardDnD({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={collisionDetectionStrategy}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
@@ -271,7 +292,7 @@ export function BoardDnD({
               cards={getCardsForColumn(column.column_id)}
               onCardClick={onCardClick}
               onAddCard={onAddCard}
-              onDeleteColumn={handleDeleteColumn}
+              onCancelColumn={handleCancelColumn}
               onRenameColumn={handleRenameColumn}
               onMoveColumn={handleMoveColumn}
               isFirst={idx === 0}

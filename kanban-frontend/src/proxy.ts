@@ -10,8 +10,9 @@ export function proxy(req: NextRequest) {
   }
 
   const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/register');
+  const isPublicPage = pathname === '/' || isAuthPage;
 
-  if (!token && !isAuthPage) {
+  if (!token && !isPublicPage) {
     return NextResponse.redirect(new URL('/login', req.url));
   }
   if (token && isAuthPage) {

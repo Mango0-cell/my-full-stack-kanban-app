@@ -3,9 +3,7 @@
 import { use, useState, useRef, useEffect } from 'react';
 import { notFound } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Settings, Trash2, Loader2, Filter, Search, Plus, X, Archive } from 'lucide-react';
-import { FloatingActionButton } from '@/components/shared/FloatingActionButton';
-import { Button } from '@/components/ui/button';
+import { Settings, Trash2, Loader2, Filter, Search, X, Archive } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,9 +14,12 @@ import { BoardDnD } from '@/components/board/BoardDnD';
 import { CardForm } from '@/components/forms/CardForm';
 import { ColumnForm } from '@/components/forms/ColumnForm';
 import { CardDetailModal } from '@/components/board/CardDetailModal';
+import { CanceledView } from '@/components/board/CanceledView';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useGetProjectQuery, useDeleteProjectMutation } from '@/lib/store/api/projectsApi';
-import { useListColumnsQuery, useDeleteColumnMutation } from '@/lib/store/api/columnsApi';
+import { useDeleteColumnMutation } from '@/lib/store/api/columnsApi';
+import { useListCardsQuery } from '@/lib/store/api/cardsApi';
+import { useGetMeQuery } from '@/lib/store/api/authApi';
 import { useRouter } from 'next/navigation';
 import type { Card, Column } from '@/lib/types/api';
 
@@ -31,6 +32,12 @@ const FILTER_LABELS: Record<FilterMode, string> = {
   month: 'This Month',
 };
 
+interface CanceledEntry {
+  columnName: string;
+  canceledAt: string;
+  cards: Card[];
+}
+
 interface Props {
   params: Promise<{ projectId: string }>;
 }
@@ -41,9 +48,11 @@ export default function BoardPage({ params }: Props) {
 
   const router = useRouter();
   const { data, isLoading, isError } = useGetProjectQuery(projectId);
+  const { data: meData } = useGetMeQuery();
+  const me = meData?.data;
   const [deleteProject, { isLoading: deletingProject }] = useDeleteProjectMutation();
   const [deleteColumn] = useDeleteColumnMutation();
-  const { data: columnsData } = useListColumnsQuery(projectId);
+  const { data: cardsData } = useListCardsQuery(projectId);
 
   // Modal state
   const [cardFormColumnId, setCardFormColumnId] = useState<number | null>(null);
@@ -51,13 +60,16 @@ export default function BoardPage({ params }: Props) {
   const [editingColumn, setEditingColumn] = useState<Column | null>(null);
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
-  const [deleteColumnTarget, setDeleteColumnTarget] = useState<Column | null>(null);
+  const [cancelColumnTarget, setCancelColumnTarget] = useState<Column | null>(null);
+  const [canceledViewOpen, setCanceledViewOpen] = useState(false);
 
   // Filter & search state
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const archivedKey = `kanban_archived_projects:${me?.user_id ?? 'guest'}`;
+  const canceledKey = `kanban_canceled_cards:${me?.user_id ?? 'guest'}:${projectId}`;
 
   useEffect(() => {
     if (searchOpen) {
@@ -81,11 +93,11 @@ export default function BoardPage({ params }: Props) {
 
   function handleArchiveProject() {
     try {
-      const stored = localStorage.getItem('kanban_archived_projects');
-      const archived: number[] = stored ? JSON.parse(stored) : [];
+      const storedScoped = localStorage.getItem(archivedKey);
+      const archived: number[] = storedScoped ? JSON.parse(storedScoped) : [];
       if (!archived.includes(projectId)) {
         archived.push(projectId);
-        localStorage.setItem('kanban_archived_projects', JSON.stringify(archived));
+        localStorage.setItem(archivedKey, JSON.stringify(archived));
       }
       toast.success('Project archived');
       router.push('/board');
@@ -105,18 +117,34 @@ export default function BoardPage({ params }: Props) {
     }
   }
 
-  function handleDeleteColumn(column: Column) {
-    setDeleteColumnTarget(column);
+  function handleCancelColumn(column: Column) {
+    setCancelColumnTarget(column);
   }
 
-  async function confirmDeleteColumn() {
-    if (!deleteColumnTarget) return;
+  async function confirmCancelColumn() {
+    if (!cancelColumnTarget) return;
     try {
-      await deleteColumn({ projectId, columnId: deleteColumnTarget.column_id }).unwrap();
-      toast.success('Column deleted');
-      setDeleteColumnTarget(null);
+      // Collect all cards for this column
+      const allCards: Card[] = cardsData?.data ?? [];
+      const columnCards = allCards.filter((c) => c.column_id === cancelColumnTarget.column_id);
+
+      // Archive to localStorage
+      const existing: CanceledEntry[] = JSON.parse(
+        localStorage.getItem(canceledKey) || '[]',
+      );
+      existing.push({
+        columnName: cancelColumnTarget.name,
+        canceledAt: new Date().toISOString(),
+        cards: columnCards,
+      });
+      localStorage.setItem(canceledKey, JSON.stringify(existing));
+
+      // Delete the column
+      await deleteColumn({ projectId, columnId: cancelColumnTarget.column_id }).unwrap();
+      toast.success('Column canceled, cards archived');
+      setCancelColumnTarget(null);
     } catch {
-      toast.error('Failed to delete column');
+      toast.error('Failed to cancel column');
     }
   }
 
@@ -263,11 +291,26 @@ export default function BoardPage({ params }: Props) {
           onCardClick={(card) => setSelectedCard(card)}
           onAddColumn={() => { setEditingColumn(null); setColumnFormOpen(true); }}
           onEditColumn={(column) => { setEditingColumn(column); setColumnFormOpen(true); }}
-          onDeleteColumn={handleDeleteColumn}
+          onCancelColumn={handleCancelColumn}
           filterMode={filterMode}
           searchQuery={searchQuery}
         />
       </div>
+
+      {/* Fixed Canceled button */}
+      <button
+        onClick={() => setCanceledViewOpen(true)}
+        className="fixed bottom-20 md:bottom-6 right-6 flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 z-40 hover:opacity-90 active:scale-[0.97]"
+        style={{
+          backgroundColor: 'rgba(245,158,11,0.15)',
+          color: '#fbbf24',
+          border: '1px solid rgba(245,158,11,0.3)',
+          boxShadow: '0 0 20px rgba(245,158,11,0.08)',
+        }}
+      >
+        <Archive className="h-4 w-4" />
+        Canceled
+      </button>
 
       {/* Modals */}
       <CardForm
@@ -290,12 +333,10 @@ export default function BoardPage({ params }: Props) {
         onClose={() => setSelectedCard(null)}
       />
 
-      {/* Mobile FAB — opens card form for first column */}
-      <FloatingActionButton
-        onClick={() => {
-          const cols = columnsData?.data;
-          if (cols?.length) setCardFormColumnId(cols[0].column_id);
-        }}
+      <CanceledView
+        open={canceledViewOpen}
+        onClose={() => setCanceledViewOpen(false)}
+        projectId={projectId}
       />
 
       {/* Delete Project Confirmation */}
@@ -344,8 +385,8 @@ export default function BoardPage({ params }: Props) {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Column Confirmation */}
-      <Dialog open={!!deleteColumnTarget} onOpenChange={(v) => !v && setDeleteColumnTarget(null)}>
+      {/* Cancel Column Confirmation */}
+      <Dialog open={!!cancelColumnTarget} onOpenChange={(v) => !v && setCancelColumnTarget(null)}>
         <DialogContent
           className="sm:max-w-sm"
           style={{
@@ -355,15 +396,15 @@ export default function BoardPage({ params }: Props) {
           }}
         >
           <DialogHeader>
-            <DialogTitle style={{ color: 'var(--color-text-primary)' }}>Delete Column</DialogTitle>
+            <DialogTitle style={{ color: 'var(--color-text-primary)' }}>Cancel Column</DialogTitle>
           </DialogHeader>
           <p className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
-            Are you sure you want to delete &quot;{deleteColumnTarget?.name}&quot; and all its cards? This cannot be undone.
+            Archive all cards in &quot;{cancelColumnTarget?.name}&quot; and remove the column? Cards will be saved in the Canceled view.
           </p>
           <div className="flex justify-end gap-3 pt-4">
             <button
               type="button"
-              onClick={() => setDeleteColumnTarget(null)}
+              onClick={() => setCancelColumnTarget(null)}
               className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
               style={{
                 backgroundColor: 'var(--color-surface-4)',
@@ -375,15 +416,15 @@ export default function BoardPage({ params }: Props) {
             </button>
             <button
               type="button"
-              onClick={confirmDeleteColumn}
+              onClick={confirmCancelColumn}
               className="px-4 py-2 rounded-lg text-sm font-medium transition-all active:scale-95"
               style={{
-                backgroundColor: 'rgba(239,68,68,0.15)',
-                color: '#f87171',
-                border: '1px solid rgba(239,68,68,0.3)',
+                backgroundColor: 'rgba(245,158,11,0.15)',
+                color: '#fbbf24',
+                border: '1px solid rgba(245,158,11,0.3)',
               }}
             >
-              Delete Column
+              Cancel Column
             </button>
           </div>
         </DialogContent>

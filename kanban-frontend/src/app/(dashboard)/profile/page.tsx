@@ -1,12 +1,17 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
 import { Loader2, User as UserIcon, Shield, Bell, Eye } from 'lucide-react';
-import { useGetProfileQuery, useUpdateProfileMutation, useChangePasswordMutation } from '@/lib/store/api/usersApi';
+import {
+  useGetProfileQuery,
+  useUpdateProfileMutation,
+  useChangePasswordMutation,
+  useGetUserByIdQuery,
+} from '@/lib/store/api/usersApi';
 
 const profileSchema = z.object({
   display_name: z.string().min(2, 'At least 2 characters'),
@@ -61,10 +66,23 @@ function InputField({
 }
 
 export default function ProfilePage() {
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const isExternalProfileView = selectedUserId !== null;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const value = new URLSearchParams(window.location.search).get('userId');
+    const parsed = value ? Number(value) : NaN;
+    setSelectedUserId(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+  }, []);
+
   const { data, isLoading } = useGetProfileQuery();
+  const { data: externalProfileData, isLoading: isExternalProfileLoading } = useGetUserByIdQuery(selectedUserId ?? 0, {
+    skip: !selectedUserId,
+  });
   const [updateProfile, { isLoading: updatingProfile }] = useUpdateProfileMutation();
   const [changePassword, { isLoading: changingPassword }] = useChangePasswordMutation();
-  const user = data?.data;
+  const user = isExternalProfileView ? externalProfileData?.data : data?.data;
 
   const {
     register: regProfile,
@@ -117,6 +135,64 @@ export default function ProfilePage() {
     .join('')
     .toUpperCase()
     .slice(0, 2) ?? '??';
+
+  if (isExternalProfileView) {
+    return (
+      <div className="max-w-3xl mx-auto p-6 md:p-10">
+        <h1 className="text-3xl font-semibold tracking-tight mb-2" style={{ color: 'var(--color-text-primary)' }}>
+          User Profile
+        </h1>
+        <p className="text-sm mb-8" style={{ color: 'var(--color-text-secondary)' }}>
+          Viewing selected teammate profile.
+        </p>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-8">
+            <div className="p-6 rounded-xl" style={{ backgroundColor: 'var(--color-surface-2)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <h3 className="text-lg font-semibold mb-6" style={{ color: 'var(--color-text-primary)' }}>
+                Public information
+              </h3>
+              {isExternalProfileLoading ? (
+                <div className="space-y-4">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-9 rounded-md animate-pulse" style={{ backgroundColor: 'var(--color-surface-4)' }} />
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-4 text-sm">
+                  <p style={{ color: 'var(--color-text-primary)' }}>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>Name:</span> {user?.display_name ?? '—'}
+                  </p>
+                  <p style={{ color: 'var(--color-text-primary)' }}>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>Email:</span> {user?.email ?? '—'}
+                  </p>
+                  <p style={{ color: 'var(--color-text-primary)' }}>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>Bio:</span> {user?.bio || 'No bio available'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="lg:col-span-4">
+            <div className="p-6 rounded-xl text-center" style={{ backgroundColor: 'var(--color-surface-3)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div
+                className="w-20 h-20 rounded-full flex items-center justify-center text-xl font-semibold mx-auto mb-4"
+                style={{ backgroundColor: 'rgba(99,102,241,0.2)', color: 'var(--color-brand-400)' }}
+              >
+                {initials}
+              </div>
+              <h4 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                {isExternalProfileLoading ? '...' : user?.display_name ?? 'User'}
+              </h4>
+              <p className="text-xs mb-1" style={{ color: 'var(--color-text-secondary)' }}>
+                {isExternalProfileLoading ? '...' : user?.email}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-3xl mx-auto p-6 md:p-10">

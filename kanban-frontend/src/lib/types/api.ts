@@ -88,6 +88,77 @@ export interface AuthResponse {
   token: string;
 }
 
+export interface UserSearchResult {
+  user_id: number;
+  email: string;
+  display_name: string;
+  avatar_url?: string;
+}
+
+export interface UserFollow {
+  follow_id: number;
+  follower_user_id: number;
+  followed_user_id: number;
+  label: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Conversation {
+  conversation_id: number;
+  updated_at: string;
+  other_user_id: number;
+  other_user_email: string;
+  other_user_display_name: string;
+  other_user_avatar_url?: string;
+  last_message_id?: number;
+  last_message_content?: string;
+  last_message_sender_user_id?: number;
+  last_message_created_at?: string;
+}
+
+export interface DirectMessage {
+  message_id: number;
+  conversation_id: number;
+  sender_user_id: number;
+  content: string;
+  created_at: string;
+  sender_display_name?: string;
+  sender_avatar_url?: string;
+}
+
+export interface NotificationItem {
+  notification_id: number;
+  user_id: number;
+  type: string;
+  title: string;
+  body: string;
+  entity_type?: string;
+  entity_id?: number;
+  is_read: boolean;
+  metadata?: Record<string, unknown>;
+  read_at?: string;
+  created_at: string;
+}
+
+export interface Invitation {
+  invitation_id: number;
+  project_id: number;
+  inviter_user_id: number;
+  invitee_user_id?: number;
+  invitee_email: string;
+  role_id: number;
+  role_name?: string;
+  status: 'pending' | 'accepted' | 'declined' | 'expired';
+  token: string;
+  message?: string;
+  created_at: string;
+  expires_at: string;
+  accepted_at?: string;
+  project_name?: string;
+  inviter_display_name?: string;
+}
+
 // API envelope
 export interface ApiResponse<T> {
   data: T;

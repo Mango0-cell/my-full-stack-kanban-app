@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useListProjectsQuery } from '@/lib/store/api/projectsApi';
+import { useGetMeQuery } from '@/lib/store/api/authApi';
 import { PixelDino } from '@/components/shared/PixelDino';
 import AnimatedList from '@/components/ui/animated-list';
 import { FolderKanban, Calendar, ChevronRight } from 'lucide-react';
@@ -9,10 +10,12 @@ import { FolderKanban, Calendar, ChevronRight } from 'lucide-react';
 export default function BoardIndexPage() {
   const router = useRouter();
   const { data, isLoading } = useListProjectsQuery();
+  const { data: meData } = useGetMeQuery();
+  const me = meData?.data;
   const archivedIds: number[] = (() => {
     if (typeof window === 'undefined') return [];
     try {
-      const stored = localStorage.getItem('kanban_archived_projects');
+      const stored = localStorage.getItem(`kanban_archived_projects:${me?.user_id ?? 'guest'}`);
       return stored ? JSON.parse(stored) : [];
     } catch { return []; }
   })();

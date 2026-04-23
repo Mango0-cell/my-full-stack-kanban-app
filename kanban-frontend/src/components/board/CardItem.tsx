@@ -34,7 +34,11 @@ export function CardItem({ card, onClick, commentCount = 0 }: CardItemProps) {
     opacity: isDragging ? 0.4 : 1,
   };
 
-  const priority = priorityConfig[card.priority] ?? priorityConfig.medium;
+  const priority = priorityConfig[card.priority as keyof typeof priorityConfig] ?? {
+    border: 'border-l-purple-500',
+    label: card.priority.toUpperCase().slice(0, 8),
+    labelClass: 'bg-purple-500/15 text-purple-400 border-purple-500/25',
+  };
   const isOverdue = card.due_date && new Date(card.due_date) < new Date();
   const isDueToday = card.due_date && !isOverdue &&
     new Date(card.due_date).toDateString() === new Date().toDateString();
@@ -102,7 +106,11 @@ export function CardItem({ card, onClick, commentCount = 0 }: CardItemProps) {
 }
 
 export function CardDragOverlay({ card }: { card: Card }) {
-  const priority = priorityConfig[card.priority] ?? priorityConfig.medium;
+  const priority = priorityConfig[card.priority as keyof typeof priorityConfig] ?? {
+    border: 'border-l-purple-500',
+    label: card.priority.toUpperCase().slice(0, 8),
+    labelClass: 'bg-purple-500/15 text-purple-400 border-purple-500/25',
+  };
   return (
     <div className={`w-[280px] rotate-[1.5deg] scale-[1.03] select-none kf-card kf-card--active border-l-[3px] ${priority.border}`}
          style={{ opacity: 0.95 }}>

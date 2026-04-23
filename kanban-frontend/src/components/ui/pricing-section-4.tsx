@@ -69,13 +69,13 @@ const PricingSwitch = ({ onSwitch }: { onSwitch: (value: string) => void }) => {
 
   return (
     <div className="flex justify-center">
-      <div className="relative z-10 mx-auto flex w-fit rounded-full bg-neutral-900 border border-gray-700 p-1">
+      <div className="relative z-10 mx-auto flex w-fit rounded-full bg-[#1a2030] border border-white/[0.08] p-1">
         {["Monthly", "Yearly"].map((label, i) => {
           const val = String(i);
           const isSelected = selected === val;
           return (
             <button key={label} onClick={() => handleSwitch(val)}
-              className={cn("relative z-10 w-fit h-10 rounded-full sm:px-6 px-3 sm:py-2 py-1 font-medium transition-colors", isSelected ? "text-white" : "text-gray-400")}
+              className={cn("relative z-10 w-fit h-10 rounded-full sm:px-6 px-3 sm:py-2 py-1 font-medium transition-colors", isSelected ? "text-white" : "text-slate-400")}
             >
               {isSelected && (
                 <motion.span layoutId="pricing-switch-4"
@@ -102,20 +102,20 @@ export default function PricingSection4() {
   };
 
   return (
-    <div className="min-h-screen w-full relative bg-black overflow-hidden" ref={pricingRef}>
-      {/* Sparkles background */}
+    <div className="min-h-screen w-full relative overflow-hidden" style={{ background: 'rgba(10,12,18,0.82)', backdropFilter: 'blur(2px)' }} ref={pricingRef}>
+      {/* Subtle grid + sparkles */}
       <TimelineContent animationNum={4} timelineRef={pricingRef} customVariants={revealVariants}
-        className="absolute top-0 h-96 w-full overflow-hidden [mask-image:radial-gradient(50%_50%,white,transparent)]"
+        className="absolute top-0 h-96 w-full overflow-hidden pointer-events-none [mask-image:radial-gradient(50%_50%,white,transparent)]"
       >
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff2c_1px,transparent_1px),linear-gradient(to_bottom,#3a3a3a01_1px,transparent_1px)] bg-[size:70px_80px]" />
-        <SparklesComp density={1200} speed={1} color="#FFFFFF"
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff08_1px,transparent_1px),linear-gradient(to_bottom,#ffffff04_1px,transparent_1px)] bg-[size:70px_80px]" />
+        <SparklesComp density={400} speed={0.5} color="#818cf8"
           className="absolute inset-x-0 bottom-0 h-full w-full [mask-image:radial-gradient(50%_50%,white,transparent_85%)]"
         />
       </TimelineContent>
 
-      {/* Blue glow */}
-      <div className="absolute top-0 left-[10%] right-[10%] w-[80%] h-full z-0"
-        style={{ backgroundImage: "radial-gradient(circle at center, #3131f5 0%, transparent 60%)", opacity: 0.25, mixBlendMode: "screen" }}
+      {/* Indigo glow */}
+      <div className="absolute top-0 left-[10%] right-[10%] w-[80%] h-full z-0 pointer-events-none"
+        style={{ backgroundImage: "radial-gradient(circle at center, #6366f1 0%, transparent 60%)", opacity: 0.12, mixBlendMode: "screen" }}
       />
 
       {/* Content */}
@@ -140,10 +140,10 @@ export default function PricingSection4() {
           {plans.map((plan, index) => (
             <TimelineContent key={plan.name} as="div" animationNum={2 + index} timelineRef={pricingRef} customVariants={revealVariants}>
               <Card className={cn(
-                "relative text-white border-neutral-800 hover:scale-[1.02] hover:shadow-[0_0_50px_rgba(99,102,241,0.25)] transition-all duration-300 cursor-pointer",
+                "relative text-white border-white/[0.08] hover:scale-[1.02] hover:shadow-[0_0_40px_rgba(99,102,241,0.2)] transition-all duration-300 cursor-pointer",
                 plan.popular
-                  ? "bg-gradient-to-b from-neutral-800 to-neutral-900 shadow-[0px_-13px_300px_0px_#4f46e5aa] z-20"
-                  : "bg-gradient-to-b from-neutral-900 to-black z-10"
+                  ? "bg-gradient-to-b from-[#1e2840] to-[#161c2e] shadow-[0px_-10px_200px_0px_#4f46e580] z-20"
+                  : "bg-gradient-to-b from-[#151b27] to-[#0f1420] z-10"
               )}>
                 <CardHeader className="text-left pb-4">
                   {plan.popular && (
@@ -154,25 +154,25 @@ export default function PricingSection4() {
                     <span className="text-4xl font-semibold">
                       $<NumberFlow format={{ currency: "USD" }} value={isYearly ? plan.yearlyPrice : plan.price} className="text-4xl font-semibold" />
                     </span>
-                    <span className="text-gray-400 text-sm">/{isYearly ? "year" : "month"}</span>
+                    <span className="text-slate-400 text-sm">/{isYearly ? "year" : "month"}</span>
                   </div>
-                  <p className="text-sm text-gray-400 mt-2">{plan.description}</p>
+                  <p className="text-sm text-slate-400 mt-2">{plan.description}</p>
                 </CardHeader>
                 <CardContent className="pt-0">
                   <button className={cn("w-full mb-6 p-3 text-base font-medium rounded-xl transition-all duration-200",
                     plan.popular
-                      ? "bg-gradient-to-t from-indigo-600 to-indigo-500 shadow-lg shadow-indigo-900/50 border border-indigo-500 text-white hover:from-indigo-500 hover:to-indigo-400"
-                      : "bg-gradient-to-t from-neutral-950 to-neutral-700 shadow-lg shadow-neutral-900 border border-neutral-700 text-white hover:border-neutral-600"
+                      ? "bg-indigo-500 hover:bg-indigo-400 shadow-lg shadow-indigo-900/40 border border-indigo-400/30 text-white"
+                      : "bg-[#1e2433] hover:bg-[#252d3d] border border-white/[0.07] hover:border-white/[0.14] text-slate-200"
                   )}>
                     {plan.buttonText}
                   </button>
-                  <div className="space-y-2 pt-4 border-t border-neutral-800">
+                  <div className="space-y-2 pt-4 border-t border-white/[0.06]">
                     <h4 className="font-medium text-sm text-slate-300 mb-3">{plan.includes[0]}</h4>
                     <ul className="space-y-2">
                       {plan.includes.slice(1).map((feature, fi) => (
                         <li key={fi} className="flex items-center gap-2">
                           <span className="h-1.5 w-1.5 bg-indigo-400 rounded-full shrink-0" />
-                          <span className="text-sm text-gray-400">{feature}</span>
+                          <span className="text-sm text-slate-400">{feature}</span>
                         </li>
                       ))}
                     </ul>

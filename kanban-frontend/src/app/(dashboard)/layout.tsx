@@ -2,6 +2,7 @@ import { Navbar } from '@/components/shared/Navbar';
 import { Sidebar } from '@/components/shared/Sidebar';
 import { MobileBottomNav } from '@/components/shared/MobileBottomNav';
 import { ShaderBackground } from '@/components/shared/ShaderBackground';
+import { RouteTransition } from '@/components/providers/RouteTransition';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -16,7 +17,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Sidebar />
         </div>
         <main className="flex-1 overflow-auto pb-16 md:pb-0 relative z-10">
-          {children}
+          <RouteTransition>{children}</RouteTransition>
         </main>
       </div>
       <MobileBottomNav />

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -12,18 +12,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { useCreateCardMutation } from '@/lib/store/api/cardsApi';
 
 const schema = z.object({
   title: z.string().min(1, 'Title is required').max(255),
-  priority: z.enum(['low', 'medium', 'high', 'urgent']),
+  priority: z.string().min(1),
   due_date: z.string().optional(),
 });
 type FormData = z.infer<typeof schema>;
@@ -37,6 +30,8 @@ interface CardFormProps {
 
 export function CardForm({ open, onClose, columnId, projectId }: CardFormProps) {
   const [createCard, { isLoading }] = useCreateCardMutation();
+  const [customPriorityMode, setCustomPriorityMode] = useState(false);
+  const [customPriorityValue, setCustomPriorityValue] = useState('');
 
   const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -46,7 +41,11 @@ export function CardForm({ open, onClose, columnId, projectId }: CardFormProps) 
   const priority = watch('priority');
 
   useEffect(() => {
-    if (open) reset({ priority: 'medium', title: '', due_date: '' });
+    if (open) {
+      reset({ priority: 'medium', title: '', due_date: '' });
+      setCustomPriorityMode(false);
+      setCustomPriorityValue('');
+    }
   }, [open, reset]);
 
   async function onSubmit(data: FormData) {
@@ -104,27 +103,65 @@ export function CardForm({ open, onClose, columnId, projectId }: CardFormProps) 
                    style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
               Priority
             </label>
-            <Select value={priority} onValueChange={(v) => setValue('priority', v as FormData['priority'])}>
-              <SelectTrigger
+            {customPriorityMode ? (
+              <div className="flex gap-1">
+                <input
+                  autoFocus
+                  value={customPriorityValue}
+                  onChange={e => setCustomPriorityValue(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const trimmed = customPriorityValue.trim();
+                      if (trimmed) setValue('priority', trimmed);
+                      setCustomPriorityMode(false);
+                    }
+                    if (e.key === 'Escape') setCustomPriorityMode(false);
+                  }}
+                  placeholder="e.g. blocker"
+                  className="flex-1 h-8 px-2 rounded-md text-xs outline-none"
+                  style={{ backgroundColor: '#0a0a0a', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-text-primary)' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const trimmed = customPriorityValue.trim();
+                    if (trimmed) setValue('priority', trimmed);
+                    setCustomPriorityMode(false);
+                  }}
+                  className="h-8 px-2 rounded-md text-xs font-medium"
+                  style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
+                >OK</button>
+              </div>
+            ) : (
+              <select
+                value={['low','medium','high','urgent'].includes(priority) ? priority : '__custom__'}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (val === '__custom_edit__' || val === '__custom__') {
+                    setCustomPriorityMode(true);
+                    setCustomPriorityValue(!['low','medium','high','urgent'].includes(priority) ? priority : '');
+                  } else {
+                    setValue('priority', val);
+                  }
+                }}
+                className="w-full h-9 px-2 rounded-md text-sm outline-none capitalize"
                 style={{
                   backgroundColor: 'var(--color-surface-4)',
                   border: '1px solid rgba(255,255,255,0.1)',
                   color: 'var(--color-text-primary)',
                 }}
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent
-                style={{
-                  border: '1px solid rgba(255,255,255,0.08)',
-                }}
-              >
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-                <SelectItem value="urgent">Urgent</SelectItem>
-              </SelectContent>
-            </Select>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+                {!['low','medium','high','urgent'].includes(priority) && (
+                  <option value="__custom__">{priority}</option>
+                )}
+                <option value="__custom_edit__">{!['low','medium','high','urgent'].includes(priority) ? 'Edit custom...' : 'Custom...'}</option>
+              </select>
+            )}
           </div>
 
           <div className="space-y-2">

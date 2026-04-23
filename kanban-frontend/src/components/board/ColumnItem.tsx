@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { MoreHorizontal, Plus, Pencil, Trash2, ArrowLeft, ArrowRight } from 'lucide-react';
+import { MoreHorizontal, Plus, ArrowLeft, ArrowRight, Archive, Check } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,7 +18,7 @@ interface ColumnItemProps {
   cards: Card[];
   onCardClick: (card: Card) => void;
   onAddCard: (columnId: number) => void;
-  onDeleteColumn: (column: Column) => void;
+  onCancelColumn: (column: Column) => void;
   onRenameColumn: (columnId: number, name: string) => void;
   onMoveColumn?: (columnId: number, direction: 'left' | 'right') => void;
   isFirst?: boolean;
@@ -31,7 +31,7 @@ export function ColumnItem({
   cards,
   onCardClick,
   onAddCard,
-  onDeleteColumn,
+  onCancelColumn,
   onRenameColumn,
   onMoveColumn,
   isFirst = false,
@@ -40,6 +40,7 @@ export function ColumnItem({
 }: ColumnItemProps) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(column.name);
+  const [savedOk, setSavedOk] = useState(false);
 
   const { setNodeRef, isOver } = useDroppable({
     id: `column-${column.column_id}`,
@@ -52,6 +53,8 @@ export function ColumnItem({
     const trimmed = renameValue.trim();
     if (trimmed && trimmed !== column.name) {
       onRenameColumn(column.column_id, trimmed);
+      setSavedOk(true);
+      setTimeout(() => setSavedOk(false), 1500);
     }
     setIsRenaming(false);
   }
@@ -84,8 +87,11 @@ export function ColumnItem({
               }}
             />
           ) : (
-            <span className="text-[13px] font-semibold uppercase tracking-widest truncate"
-                  style={{ color: 'var(--color-text-secondary)' }}>
+            <span
+              className="text-[13px] font-semibold uppercase tracking-widest truncate cursor-pointer hover:text-white transition-colors"
+              style={{ color: 'var(--color-text-secondary)' }}
+              onClick={() => { setRenameValue(column.name); setIsRenaming(true); }}
+            >
               {column.name}
             </span>
           )}
@@ -97,6 +103,7 @@ export function ColumnItem({
                 }}>
             {cards.length}
           </span>
+          {savedOk && <Check className="h-3 w-3 text-emerald-400 animate-in fade-in" />}
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -140,13 +147,6 @@ export function ColumnItem({
                 border: '1px solid rgba(255,255,255,0.08)',
               }}
             >
-              <DropdownMenuItem
-                className="text-sm cursor-pointer"
-                onClick={() => { setRenameValue(column.name); setIsRenaming(true); }}
-              >
-                <Pencil className="h-3.5 w-3.5 mr-2" />
-                Rename
-              </DropdownMenuItem>
               {!isFirst && onMoveColumn && (
                 <DropdownMenuItem
                   className="text-sm cursor-pointer"
@@ -166,11 +166,12 @@ export function ColumnItem({
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem
-                className="text-red-400 hover:text-red-300 hover:bg-red-500/10 focus:text-red-300 focus:bg-red-500/10 cursor-pointer"
-                onClick={() => onDeleteColumn(column)}
+                className="cursor-pointer hover:bg-amber-500/10 focus:bg-amber-500/10"
+                style={{ color: '#f59e0b' }}
+                onClick={() => onCancelColumn(column)}
               >
-                <Trash2 className="h-3.5 w-3.5 mr-2" />
-                Delete column
+                <Archive className="h-3.5 w-3.5 mr-2" />
+                Cancel column
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

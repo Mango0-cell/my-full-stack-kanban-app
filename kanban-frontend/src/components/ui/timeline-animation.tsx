@@ -14,7 +14,7 @@ interface TimelineContentProps {
 }
 
 export const TimelineContent = forwardRef<HTMLDivElement, TimelineContentProps>(
-  ({ children, animationNum, customVariants, className, as: Tag = "div", ...props }, ref) => {
+  ({ children, animationNum, customVariants, className, as: Tag = "div", timelineRef: _timelineRef, ...props }, ref) => {
     const defaultVariants: Variants = {
       hidden: { opacity: 0, y: 20, filter: "blur(10px)" },
       visible: (i: number) => ({
