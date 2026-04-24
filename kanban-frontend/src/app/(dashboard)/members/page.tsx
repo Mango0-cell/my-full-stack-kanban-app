@@ -28,6 +28,8 @@ const externalInviteSchema = z.object({
 type ExternalInviteForm = z.infer<typeof externalInviteSchema>;
 const PricingSection = dynamic(() => import('@/components/ui/pricing-section'), { ssr: false });
 
+type InviteRole = 'admin' | 'editor' | 'viewer';
+
 export default function MembersPage() {
   const { data: meData } = useGetMeQuery();
   const me = meData?.data;
@@ -49,6 +51,10 @@ export default function MembersPage() {
   const { data: usersData } = useSearchUsersQuery(memberSearch.trim(), { skip: memberSearch.trim().length < 2 });
   const foundUsers = usersData?.data ?? [];
 
+  // Role state for invitation dialogs
+  const [externalInviteRole, setExternalInviteRole] = useState<InviteRole>('viewer');
+  const [internalInviteRole, setInternalInviteRole] = useState<InviteRole>('viewer');
+
   const { refetch: refetchNotifications } = useListNotificationsQuery(5);
   const [sendInvite, { isLoading: isSendingExternal }] = useSendInviteMutation();
   const [updateMemberRole] = useUpdateMemberRoleMutation();
@@ -65,15 +71,27 @@ export default function MembersPage() {
   useEffect(() => {
     const socket = getRealtimeSocket();
     connectRealtime();
-    const onInvitationAccepted = () => refetchMembers();
-    const onInvitationReceived = () => refetchNotifications();
+    const onInvitationAccepted = () => {
+      refetchMembers();
+      refetchSentInvites();
+    };
+    const onInvitationReceived = () => {
+      refetchNotifications();
+      refetchSentInvites();
+    };
+    const onInvitationUpdated = () => {
+      refetchSentInvites();
+      refetchMembers();
+    };
     socket.on('invitation.accepted', onInvitationAccepted);
     socket.on('invitation.received', onInvitationReceived);
+    socket.on('invitation.updated', onInvitationUpdated);
     return () => {
       socket.off('invitation.accepted', onInvitationAccepted);
       socket.off('invitation.received', onInvitationReceived);
+      socket.off('invitation.updated', onInvitationUpdated);
     };
-  }, [refetchMembers, refetchNotifications]);
+  }, [refetchMembers, refetchNotifications, refetchSentInvites]);
 
   const form = useForm<ExternalInviteForm>({
     resolver: zodResolver(externalInviteSchema),
@@ -111,16 +129,18 @@ export default function MembersPage() {
       await sendInvite({
         project_id: activeProjectId,
         email: values.email.trim().toLowerCase(),
-        role_name: 'viewer',
+        role_name: externalInviteRole,
         ...(message ? { message } : {}),
       }).unwrap();
       toast.success('External invitation sent');
       form.reset();
+      setExternalInviteRole('viewer');
       setExternalInviteOpen(false);
       refetchSentInvites();
       refetchMembers();
-    } catch {
-      toast.error('Could not send invitation');
+    } catch (err: unknown) {
+      const apiErr = err as { data?: { message?: string } } | undefined;
+      toast.error(apiErr?.data?.message || 'Could not send invitation');
     }
   }
 
@@ -133,15 +153,17 @@ export default function MembersPage() {
       await sendInvite({
         project_id: activeProjectId,
         email: email.trim().toLowerCase(),
-        role_name: 'viewer',
+        role_name: internalInviteRole,
       }).unwrap();
       toast.success('Invitation sent');
       setInternalInviteOpen(false);
       setMemberSearch('');
+      setInternalInviteRole('viewer');
       refetchSentInvites();
       refetchMembers();
-    } catch {
-      toast.error('Failed to send invitation');
+    } catch (err: unknown) {
+      const apiErr = err as { data?: { message?: string } } | undefined;
+      toast.error(apiErr?.data?.message || 'Failed to send invitation');
     }
   }
 
@@ -182,7 +204,7 @@ export default function MembersPage() {
             <button
               key={p.project_id}
               onClick={() => setSelectedProjectId(p.project_id)}
-              className="px-4 py-2 rounded-xl text-sm whitespace-nowrap flex items-center gap-2"
+              className="px-4 py-2 rounded-xl text-sm whitespace-nowrap flex items-center gap-2 cursor-pointer transition-colors duration-200 hover:opacity-90"
               style={{
                 backgroundColor: activeProjectId === p.project_id ? 'var(--color-surface-3)' : 'var(--color-surface-2)',
                 color: activeProjectId === p.project_id ? 'var(--color-brand-300)' : 'var(--color-text-secondary)',
@@ -206,7 +228,7 @@ export default function MembersPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setExternalInviteOpen(true)}
-                  className="px-3 py-2 rounded-lg text-xs font-medium uppercase tracking-widest cursor-pointer transition-colors duration-200 hover:opacity-90"
+                  className="px-3 py-2 rounded-lg text-xs font-medium uppercase tracking-widest cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-4)]"
                   style={{ backgroundColor: 'var(--color-surface-3)', color: 'var(--color-text-primary)' }}
                 >
                   Invite external member
@@ -253,7 +275,7 @@ export default function MembersPage() {
                       value={member.role_name}
                       onChange={(e) => handleRoleChange(member.user_id, e.target.value as 'admin' | 'editor' | 'viewer')}
                       disabled={member.user_id === me?.user_id}
-                      className="h-8 rounded-md px-2 text-xs"
+                      className="h-8 rounded-md px-2 text-xs cursor-pointer"
                       style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-primary)' }}
                     >
                       <option value="admin">admin</option>
@@ -354,7 +376,7 @@ export default function MembersPage() {
               </div>
               <button
                 onClick={() => setSubscriptionOpen(true)}
-                className="w-full py-2.5 rounded-lg text-sm font-medium transition-colors duration-200 cursor-pointer hover:bg-[var(--color-surface-3)]"
+                className="w-full py-2.5 rounded-lg text-sm font-medium transition-colors duration-200 cursor-pointer hover:bg-[var(--color-surface-4)]"
                 style={{
                   backgroundColor: 'var(--color-surface-4)',
                   border: '1px solid rgba(255,255,255,0.1)',
@@ -381,7 +403,7 @@ export default function MembersPage() {
             </div>
             <p className="text-[10px] flex items-center gap-1" style={{ color: 'var(--color-text-secondary)' }}>
               <Calendar className="h-3 w-3" />
-              Active project: {activeProject?.project_name ?? '—'}
+              Active project: {activeProject?.project_name ?? '---'}
             </p>
           </div>
 
@@ -398,6 +420,7 @@ export default function MembersPage() {
         </div>
       </div>
 
+      {/* External invite dialog */}
       <Dialog open={externalInviteOpen} onOpenChange={setExternalInviteOpen}>
         <DialogContent style={{ backgroundColor: 'var(--color-surface-2)', border: '1px solid rgba(255,255,255,0.08)' }}>
           <DialogHeader>
@@ -417,6 +440,21 @@ export default function MembersPage() {
             {form.formState.errors.email && (
               <p className="text-xs text-red-400">{form.formState.errors.email.message}</p>
             )}
+            <div>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--color-text-secondary)' }}>
+                Role
+              </label>
+              <select
+                value={externalInviteRole}
+                onChange={(e) => setExternalInviteRole(e.target.value as InviteRole)}
+                className="w-full h-10 rounded-md px-3 text-sm outline-none cursor-pointer"
+                style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-primary)' }}
+              >
+                <option value="admin">Admin</option>
+                <option value="editor">Editor</option>
+                <option value="viewer">Viewer</option>
+              </select>
+            </div>
             <textarea
               {...form.register('message')}
               placeholder="Invitation message..."
@@ -436,11 +474,27 @@ export default function MembersPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Internal invite dialog */}
       <Dialog open={internalInviteOpen} onOpenChange={setInternalInviteOpen}>
         <DialogContent style={{ backgroundColor: 'var(--color-surface-2)', border: '1px solid rgba(255,255,255,0.08)' }}>
           <DialogHeader>
             <DialogTitle style={{ color: 'var(--color-text-primary)' }}>Add member</DialogTitle>
           </DialogHeader>
+          <div>
+            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--color-text-secondary)' }}>
+              Role
+            </label>
+            <select
+              value={internalInviteRole}
+              onChange={(e) => setInternalInviteRole(e.target.value as InviteRole)}
+              className="w-full h-9 rounded-md px-3 text-sm outline-none mb-3 cursor-pointer"
+              style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-primary)' }}
+            >
+              <option value="admin">Admin</option>
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+            </select>
+          </div>
           <div className="flex items-center gap-2 px-2 py-2 rounded-md mb-2" style={{ backgroundColor: 'var(--color-surface-3)' }}>
             <Search className="h-4 w-4" style={{ color: 'var(--color-text-muted)' }} />
             <input

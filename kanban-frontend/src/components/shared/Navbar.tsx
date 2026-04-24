@@ -190,7 +190,7 @@ export function Navbar() {
               <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>Notifications</span>
               {notifLimit === 5 ? (
                 <button
-                  className="text-xs"
+                  className="text-xs cursor-pointer transition-colors hover:opacity-80"
                   style={{ color: 'var(--color-brand-400)' }}
                   onClick={() => setNotifLimit(10)}
                 >
@@ -198,7 +198,7 @@ export function Navbar() {
                 </button>
               ) : (
                 <button
-                  className="text-xs"
+                  className="text-xs cursor-pointer transition-colors hover:opacity-80"
                   style={{ color: 'var(--color-text-secondary)' }}
                   onClick={() => setNotifLimit(5)}
                 >
@@ -240,7 +240,7 @@ export function Navbar() {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-3)] transition-colors duration-150">
+            <button className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-3)] transition-colors duration-150 cursor-pointer">
               <div
                 className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium shrink-0"
                 style={{

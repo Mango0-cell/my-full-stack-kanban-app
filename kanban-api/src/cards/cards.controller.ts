@@ -11,10 +11,14 @@ import {
 import { CardsService } from './cards.service';
 import { CreateCardDto, UpdateCardDto, MoveCardDto } from './dto/create-card.dto';
 import { CurrentUser, JwtPayload } from '../common/decorators/current-user.decorator';
+import { ProjectAccessService } from '../projects/project-access.service';
 
 @Controller()
 export class CardsController {
-  constructor(private readonly cardsService: CardsService) {}
+  constructor(
+    private readonly cardsService: CardsService,
+    private readonly projectAccess: ProjectAccessService,
+  ) {}
 
   // GET /api/projects/:id/cards
   @Get('projects/:id/cards')
@@ -37,6 +41,8 @@ export class CardsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateCardDto,
   ) {
+    const projectId = await this.projectAccess.getProjectIdFromColumn(cid);
+    await this.projectAccess.assertCanEditBoard(projectId, user.userId);
     const card = await this.cardsService.createCard(cid, user.userId, dto);
     return { data: card, message: 'Card created', error: null };
   }
@@ -55,6 +61,8 @@ export class CardsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateCardDto,
   ) {
+    const projectId = await this.projectAccess.getProjectIdFromCard(id);
+    await this.projectAccess.assertCanEditBoard(projectId, user.userId);
     const card = await this.cardsService.updateCard(id, user.userId, dto as Record<string, unknown>);
     return { data: card, message: 'Card updated', error: null };
   }
@@ -62,6 +70,8 @@ export class CardsController {
   // DELETE /api/cards/:id
   @Delete('cards/:id')
   async delete(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    const projectId = await this.projectAccess.getProjectIdFromCard(id);
+    await this.projectAccess.assertCanEditBoard(projectId, user.userId);
     await this.cardsService.deleteCard(id, user.userId);
     return { data: null, message: 'Card deleted', error: null };
   }
@@ -73,6 +83,8 @@ export class CardsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: MoveCardDto,
   ) {
+    const projectId = await this.projectAccess.getProjectIdFromCard(id);
+    await this.projectAccess.assertCanEditBoard(projectId, user.userId);
     const card = await this.cardsService.moveCard(id, user.userId, dto.column_id, dto.position);
     return { data: card, message: 'Card moved', error: null };
   }

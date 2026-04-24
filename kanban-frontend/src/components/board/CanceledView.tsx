@@ -15,6 +15,18 @@ interface CanceledEntry {
   cards: Card[];
 }
 
+interface OrphanCard {
+  card: Card;
+  originalColumn: string;
+  canceledAt: string;
+}
+
+/** New storage format with orphanCards for cards whose column group was deleted */
+interface CanceledStorage {
+  entries: CanceledEntry[];
+  orphanCards: OrphanCard[];
+}
+
 interface CanceledViewProps {
   open: boolean;
   onClose: () => void;
@@ -48,21 +60,44 @@ function formatDate(iso: string) {
   }
 }
 
+/** Read localStorage, handling both old (CanceledEntry[]) and new (CanceledStorage) formats */
+function readStorage(canceledKey: string): CanceledStorage {
+  try {
+    const raw = localStorage.getItem(canceledKey);
+    if (!raw) return { entries: [], orphanCards: [] };
+    const parsed = JSON.parse(raw);
+    // Old format: plain array of CanceledEntry
+    if (Array.isArray(parsed)) {
+      return { entries: parsed as CanceledEntry[], orphanCards: [] };
+    }
+    // New format
+    const storage = parsed as CanceledStorage;
+    return {
+      entries: storage.entries ?? [],
+      orphanCards: storage.orphanCards ?? [],
+    };
+  } catch {
+    return { entries: [], orphanCards: [] };
+  }
+}
+
+function writeStorage(canceledKey: string, storage: CanceledStorage) {
+  localStorage.setItem(canceledKey, JSON.stringify(storage));
+}
+
+/* ── Unarchive button for entry-based cards ── */
 interface UnarchiveButtonProps {
   card: Card;
-  entryIndex: number;
-  cardIndex: number;
+  storageLocation: { type: 'entry'; entryIndex: number; cardIndex: number } | { type: 'orphan'; orphanIndex: number };
   projectId: number;
+  canceledKey: string;
   onSuccess: () => void;
 }
 
-function UnarchiveButton({ card, entryIndex, cardIndex, projectId, onSuccess }: UnarchiveButtonProps) {
+function UnarchiveButton({ card, storageLocation, projectId, canceledKey, onSuccess }: UnarchiveButtonProps) {
   const [state, setState] = useState<UnarchiveState>({ selecting: false, targetColumnId: null });
   const { data: columnsData } = useListColumnsQuery(projectId);
-  const { data: meData } = useGetMeQuery();
-  const me = meData?.data;
   const [createCard, { isLoading: isCreating }] = useCreateCardMutation();
-  const canceledKey = `kanban_canceled_cards:${me?.user_id ?? 'guest'}:${projectId}`;
 
   const columns = columnsData?.data ?? [];
 
@@ -81,19 +116,20 @@ function UnarchiveButton({ card, entryIndex, cardIndex, projectId, onSuccess }: 
 
       // Remove the card from localStorage
       try {
-        const raw = localStorage.getItem(canceledKey);
-        const existing: CanceledEntry[] = raw ? JSON.parse(raw) : [];
-        const updatedEntry = {
-          ...existing[entryIndex],
-          cards: existing[entryIndex].cards.filter((_, idx) => idx !== cardIndex),
-        };
-        let updated: CanceledEntry[];
-        if (updatedEntry.cards.length === 0) {
-          updated = existing.filter((_, idx) => idx !== entryIndex);
+        const storage = readStorage(canceledKey);
+        if (storageLocation.type === 'entry') {
+          const { entryIndex, cardIndex } = storageLocation;
+          const entry = storage.entries[entryIndex];
+          const updatedCards = entry.cards.filter((_, idx) => idx !== cardIndex);
+          if (updatedCards.length === 0) {
+            storage.entries = storage.entries.filter((_, idx) => idx !== entryIndex);
+          } else {
+            storage.entries[entryIndex] = { ...entry, cards: updatedCards };
+          }
         } else {
-          updated = existing.map((e, idx) => (idx === entryIndex ? updatedEntry : e));
+          storage.orphanCards = storage.orphanCards.filter((_, idx) => idx !== storageLocation.orphanIndex);
         }
-        localStorage.setItem(canceledKey, JSON.stringify(updated));
+        writeStorage(canceledKey, storage);
       } catch {
         // ignore localStorage errors
       }
@@ -109,7 +145,7 @@ function UnarchiveButton({ card, entryIndex, cardIndex, projectId, onSuccess }: 
     return (
       <button
         onClick={() => setState({ selecting: true, targetColumnId: null })}
-        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer hover:opacity-80"
         style={{
           backgroundColor: 'var(--color-surface-3)',
           color: 'var(--color-text-secondary)',
@@ -129,7 +165,7 @@ function UnarchiveButton({ card, entryIndex, cardIndex, projectId, onSuccess }: 
         onChange={(e) =>
           setState((prev) => ({ ...prev, targetColumnId: e.target.value ? Number(e.target.value) : null }))
         }
-        className="h-7 px-2 rounded-md text-xs outline-none"
+        className="h-7 px-2 rounded-md text-xs outline-none cursor-pointer"
         style={{
           backgroundColor: '#0a0a0a',
           border: '1px solid rgba(255,255,255,0.1)',
@@ -146,18 +182,112 @@ function UnarchiveButton({ card, entryIndex, cardIndex, projectId, onSuccess }: 
       <button
         disabled={!state.targetColumnId || isCreating}
         onClick={handleConfirm}
-        className="h-7 px-3 rounded-md text-xs font-medium disabled:opacity-50"
+        className="h-7 px-3 rounded-md text-xs font-medium disabled:opacity-50 cursor-pointer hover:opacity-90 transition-colors"
         style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
       >
         {isCreating ? '...' : 'Send'}
       </button>
       <button
         onClick={() => setState({ selecting: false, targetColumnId: null })}
-        className="h-7 px-2 rounded-md text-xs"
+        className="h-7 px-2 rounded-md text-xs cursor-pointer hover:bg-[var(--color-surface-3)] transition-colors"
         style={{ color: 'var(--color-text-muted)' }}
       >
         <X className="h-3.5 w-3.5" />
       </button>
+    </div>
+  );
+}
+
+/* ── Shared card row component ── */
+interface CardRowProps {
+  card: Card;
+  columnName: string;
+  onDelete: () => void;
+  unarchiveProps: UnarchiveButtonProps;
+}
+
+function CardRow({ card, columnName, onDelete, unarchiveProps }: CardRowProps) {
+  const badge = getPriorityBadge(card.priority);
+  return (
+    <div
+      className="flex items-start justify-between p-5 rounded-xl mb-3"
+      style={{
+        backgroundColor: 'var(--color-surface-2)',
+        border: '1px solid rgba(255,255,255,0.06)',
+      }}
+    >
+      {/* Left: icon + info */}
+      <div className="flex items-start gap-4">
+        <div
+          className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+          style={{
+            backgroundColor: badge.bg,
+            border: `1px solid ${badge.color}30`,
+          }}
+        >
+          <Flag className="h-5 w-5" style={{ color: badge.color }} />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <h3
+            className="text-sm font-semibold"
+            style={{ color: 'var(--color-text-primary)' }}
+          >
+            {card.title}
+          </h3>
+          {card.description && (
+            <p
+              className="text-xs line-clamp-2"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              {card.description}
+            </p>
+          )}
+          <div className="flex items-center flex-wrap gap-3 pt-1">
+            <span
+              className="text-[10px] font-medium px-2 py-0.5 rounded-sm uppercase tracking-wider"
+              style={{ color: badge.color, backgroundColor: badge.bg }}
+            >
+              {badge.label}
+            </span>
+            {card.due_date && (
+              <span
+                className="flex items-center gap-1 text-[11px]"
+                style={{
+                  color: 'var(--color-text-muted)',
+                  fontFamily: 'var(--font-mono)',
+                }}
+              >
+                <Calendar className="h-3 w-3" />
+                {formatDate(card.due_date)}
+              </span>
+            )}
+            <span
+              className="text-[11px]"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              from{' '}
+              <strong style={{ color: 'var(--color-text-secondary)' }}>
+                {columnName}
+              </strong>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onDelete}
+          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer hover:opacity-80"
+          style={{
+            backgroundColor: 'rgba(239,68,68,0.12)',
+            color: '#f87171',
+            border: '1px solid rgba(239,68,68,0.2)',
+          }}
+        >
+          Delete
+        </button>
+        <UnarchiveButton {...unarchiveProps} />
+      </div>
     </div>
   );
 }
@@ -168,17 +298,9 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
   const me = meData?.data;
   const canceledKey = `kanban_canceled_cards:${me?.user_id ?? 'guest'}:${projectId}`;
 
-  function readEntries(): CanceledEntry[] {
-    try {
-      const raw = localStorage.getItem(canceledKey);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  }
-
   void storageVersion;
-  const entries = open ? readEntries() : [];
+  const storage = open ? readStorage(canceledKey) : { entries: [], orphanCards: [] };
+  const { entries, orphanCards } = storage;
 
   function reloadEntries() {
     setStorageVersion((prev) => prev + 1);
@@ -186,17 +308,27 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
 
   function deleteCard(entryIndex: number, cardIndex: number) {
     try {
-      const raw = localStorage.getItem(canceledKey);
-      const existing: CanceledEntry[] = raw ? JSON.parse(raw) : [];
-      const updatedEntry = {
-        ...existing[entryIndex],
-        cards: existing[entryIndex].cards.filter((_, idx) => idx !== cardIndex),
-      };
-      const updated =
-        updatedEntry.cards.length === 0
-          ? existing.filter((_, idx) => idx !== entryIndex)
-          : existing.map((entry, idx) => (idx === entryIndex ? updatedEntry : entry));
-      localStorage.setItem(canceledKey, JSON.stringify(updated));
+      const s = readStorage(canceledKey);
+      const entry = s.entries[entryIndex];
+      const updatedCards = entry.cards.filter((_, idx) => idx !== cardIndex);
+      if (updatedCards.length === 0) {
+        s.entries = s.entries.filter((_, idx) => idx !== entryIndex);
+      } else {
+        s.entries[entryIndex] = { ...entry, cards: updatedCards };
+      }
+      writeStorage(canceledKey, s);
+      reloadEntries();
+      toast.success('Card deleted from canceled list');
+    } catch {
+      toast.error('Failed to delete card');
+    }
+  }
+
+  function deleteOrphanCard(orphanIndex: number) {
+    try {
+      const s = readStorage(canceledKey);
+      s.orphanCards = s.orphanCards.filter((_, idx) => idx !== orphanIndex);
+      writeStorage(canceledKey, s);
       reloadEntries();
       toast.success('Card deleted from canceled list');
     } catch {
@@ -206,18 +338,25 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
 
   function deleteCanceledColumn(entryIndex: number) {
     try {
-      const raw = localStorage.getItem(canceledKey);
-      const existing: CanceledEntry[] = raw ? JSON.parse(raw) : [];
-      const updated = existing.filter((_, idx) => idx !== entryIndex);
-      localStorage.setItem(canceledKey, JSON.stringify(updated));
+      const s = readStorage(canceledKey);
+      const entry = s.entries[entryIndex];
+      // Move cards to orphanCards instead of deleting them
+      const newOrphans: OrphanCard[] = entry.cards.map((card) => ({
+        card,
+        originalColumn: entry.columnName,
+        canceledAt: entry.canceledAt,
+      }));
+      s.orphanCards = [...s.orphanCards, ...newOrphans];
+      s.entries = s.entries.filter((_, idx) => idx !== entryIndex);
+      writeStorage(canceledKey, s);
       reloadEntries();
-      toast.success('Canceled column deleted');
+      toast.success('Column group removed — cards moved to Ungrouped');
     } catch {
       toast.error('Failed to delete canceled column');
     }
   }
 
-  const totalCards = entries.reduce((sum, e) => sum + e.cards.length, 0);
+  const totalCards = entries.reduce((sum, e) => sum + e.cards.length, 0) + orphanCards.length;
 
   if (!open) return null;
 
@@ -254,7 +393,7 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
         </div>
         <button
           onClick={onClose}
-          className="p-2 rounded-lg transition-colors"
+          className="p-2 rounded-lg transition-colors cursor-pointer hover:bg-[var(--color-surface-3)]"
           style={{ color: 'var(--color-text-secondary)' }}
         >
           <X className="h-5 w-5" />
@@ -263,7 +402,7 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-6">
-        {entries.length === 0 ? (
+        {entries.length === 0 && orphanCards.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-4">
             <PixelDino size={220} />
             <h3 className="text-xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>
@@ -275,6 +414,7 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
           </div>
         ) : (
           <div className="flex flex-col gap-8 max-w-3xl mx-auto">
+            {/* Grouped entries */}
             {entries.map((entry, entryIndex) => (
               <div key={entryIndex} className="flex flex-col gap-3">
                 {/* Section header */}
@@ -296,7 +436,7 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
                   </span>
                   <button
                     onClick={() => deleteCanceledColumn(entryIndex)}
-                    className="text-[11px] px-2 py-1 rounded-md"
+                    className="text-[11px] px-2 py-1 rounded-md cursor-pointer hover:opacity-80 transition-colors"
                     style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.12)' }}
                   >
                     Delete column
@@ -309,112 +449,62 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
                   </p>
                 ) : (
                   <div>
-                    {entry.cards.map((card, cardIndex) => {
-                      const badge = getPriorityBadge(card.priority);
-                      return (
-                        <div
-                          key={card.card_id}
-                          className="flex items-start justify-between p-5 rounded-xl mb-3"
-                          style={{
-                            backgroundColor: 'var(--color-surface-2)',
-                            border: '1px solid rgba(255,255,255,0.06)',
-                          }}
-                        >
-                          {/* Left: icon + info */}
-                          <div className="flex items-start gap-4">
-                            {/* Priority icon box */}
-                            <div
-                              className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
-                              style={{
-                                backgroundColor: badge.bg,
-                                border: `1px solid ${badge.color}30`,
-                              }}
-                            >
-                              <Flag className="h-5 w-5" style={{ color: badge.color }} />
-                            </div>
-                            <div className="min-w-0 space-y-1">
-                              {/* Title */}
-                              <h3
-                                className="text-sm font-semibold"
-                                style={{ color: 'var(--color-text-primary)' }}
-                              >
-                                {card.title}
-                              </h3>
-                              {/* Description snippet */}
-                              {card.description && (
-                                <p
-                                  className="text-xs line-clamp-2"
-                                  style={{ color: 'var(--color-text-secondary)' }}
-                                >
-                                  {card.description}
-                                </p>
-                              )}
-                              {/* Meta row */}
-                              <div className="flex items-center flex-wrap gap-3 pt-1">
-                                {/* Priority badge */}
-                                <span
-                                  className="text-[10px] font-medium px-2 py-0.5 rounded-sm uppercase tracking-wider"
-                                  style={{
-                                    color: badge.color,
-                                    backgroundColor: badge.bg,
-                                  }}
-                                >
-                                  {badge.label}
-                                </span>
-                                {/* Due date */}
-                                {card.due_date && (
-                                  <span
-                                    className="flex items-center gap-1 text-[11px]"
-                                    style={{
-                                      color: 'var(--color-text-muted)',
-                                      fontFamily: 'var(--font-mono)',
-                                    }}
-                                  >
-                                    <Calendar className="h-3 w-3" />
-                                    {formatDate(card.due_date)}
-                                  </span>
-                                )}
-                                {/* From column */}
-                                <span
-                                  className="text-[11px]"
-                                  style={{ color: 'var(--color-text-muted)' }}
-                                >
-                                  from{' '}
-                                  <strong style={{ color: 'var(--color-text-secondary)' }}>
-                                    {entry.columnName}
-                                  </strong>
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => deleteCard(entryIndex, cardIndex)}
-                              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-                              style={{
-                                backgroundColor: 'rgba(239,68,68,0.12)',
-                                color: '#f87171',
-                                border: '1px solid rgba(239,68,68,0.2)',
-                              }}
-                            >
-                              Delete
-                            </button>
-                            <UnarchiveButton
-                              card={card}
-                              entryIndex={entryIndex}
-                              cardIndex={cardIndex}
-                              projectId={projectId}
-                              onSuccess={reloadEntries}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {entry.cards.map((card, cardIndex) => (
+                      <CardRow
+                        key={card.card_id}
+                        card={card}
+                        columnName={entry.columnName}
+                        onDelete={() => deleteCard(entryIndex, cardIndex)}
+                        unarchiveProps={{
+                          card,
+                          storageLocation: { type: 'entry', entryIndex, cardIndex },
+                          projectId,
+                          canceledKey,
+                          onSuccess: reloadEntries,
+                        }}
+                      />
+                    ))}
                   </div>
                 )}
               </div>
             ))}
+
+            {/* Ungrouped (orphan) cards */}
+            {orphanCards.length > 0 && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between pb-1">
+                  <span
+                    className="text-[11px] font-semibold uppercase tracking-widest"
+                    style={{ color: 'var(--color-text-secondary)' }}
+                  >
+                    Ungrouped Cards
+                  </span>
+                  <span
+                    className="text-[11px]"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    {orphanCards.length} cards
+                  </span>
+                </div>
+                <div>
+                  {orphanCards.map((orphan, orphanIndex) => (
+                    <CardRow
+                      key={`orphan-${orphan.card.card_id}-${orphanIndex}`}
+                      card={orphan.card}
+                      columnName={orphan.originalColumn}
+                      onDelete={() => deleteOrphanCard(orphanIndex)}
+                      unarchiveProps={{
+                        card: orphan.card,
+                        storageLocation: { type: 'orphan', orphanIndex },
+                        projectId,
+                        canceledKey,
+                        onSuccess: reloadEntries,
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

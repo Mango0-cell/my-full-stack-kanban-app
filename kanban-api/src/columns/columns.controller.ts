@@ -11,10 +11,14 @@ import {
 import { ColumnsService } from './columns.service';
 import { CreateColumnDto, UpdateColumnDto } from './dto/create-column.dto';
 import { CurrentUser, JwtPayload } from '../common/decorators/current-user.decorator';
+import { ProjectAccessService } from '../projects/project-access.service';
 
 @Controller('projects/:id/columns')
 export class ColumnsController {
-  constructor(private readonly columnsService: ColumnsService) {}
+  constructor(
+    private readonly columnsService: ColumnsService,
+    private readonly projectAccess: ProjectAccessService,
+  ) {}
 
   @Get()
   async list(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
@@ -28,6 +32,7 @@ export class ColumnsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateColumnDto,
   ) {
+    await this.projectAccess.assertCanEditBoard(id, user.userId);
     const col = await this.columnsService.createColumn(id, user.userId, dto.name, dto.position);
     return { data: col, message: 'Column created', error: null };
   }
@@ -39,6 +44,7 @@ export class ColumnsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateColumnDto,
   ) {
+    await this.projectAccess.assertCanEditBoard(id, user.userId);
     const col = await this.columnsService.updateColumn(id, cid, user.userId, dto);
     return { data: col, message: 'Column updated', error: null };
   }
@@ -49,6 +55,7 @@ export class ColumnsController {
     @Param('cid', ParseIntPipe) cid: number,
     @CurrentUser() user: JwtPayload,
   ) {
+    await this.projectAccess.assertCanEditBoard(id, user.userId);
     await this.columnsService.deleteColumn(id, cid, user.userId);
     return { data: null, message: 'Column deleted', error: null };
   }

@@ -250,21 +250,13 @@ export class ProjectsService {
     const requesterIsProjectAuthor = requester.owner_user_id === requesterId;
     const targetMember = await this.getMemberRole(projectId, targetUserId);
 
-    if (targetUserId === requesterId && requesterIsProjectAuthor) {
-      throw new ForbiddenException('Project owner cannot remove self from the project');
-    }
-    if (!requesterIsProjectAuthor && this.rolePolicy.isPrivilegedRole(targetMember.role_name)) {
-      throw new ForbiddenException('Only project owner can remove privileged roles');
+    // The project owner can never be removed — not even by themselves
+    if (targetUserId === requester.owner_user_id) {
+      throw new ForbiddenException('Cannot remove the project owner');
     }
 
-    const { rows: ownerRows } = await this.db.query(
-      `SELECT COUNT(*) as cnt FROM project_members pm
-       JOIN roles r ON r.role_id = pm.role_id
-       WHERE pm.project_id = $1 AND r.role_name = 'owner'`,
-      [projectId],
-    );
-    if (parseInt(ownerRows[0].cnt, 10) <= 1 && targetMember.role_name === 'owner') {
-      throw new ForbiddenException('Cannot remove the last owner');
+    if (!requesterIsProjectAuthor && this.rolePolicy.isPrivilegedRole(targetMember.role_name)) {
+      throw new ForbiddenException('Only project owner can remove privileged roles');
     }
 
     const { rows } = await this.db.query(

@@ -1,11 +1,14 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, Clock, CheckCheck } from 'lucide-react';
+import { Search, Plus, Clock, CheckCheck, X } from 'lucide-react';
 import { useListConversationsQuery } from '@/lib/store/api/chatApi';
+import { useSendMessageMutation } from '@/lib/store/api/chatApi';
 import { useGetMeQuery } from '@/lib/store/api/authApi';
+import { useSearchUsersQuery } from '@/lib/store/api/usersApi';
 import { PixelDino } from '@/components/shared/PixelDino';
+import toast from 'react-hot-toast';
 
 /* ---------- helpers ---------- */
 
@@ -208,6 +211,126 @@ function ConvoRow({
   );
 }
 
+/* ---------- New Message Dialog ---------- */
+
+function NewMessageDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [userSearch, setUserSearch] = useState('');
+  const { data: usersData } = useSearchUsersQuery(userSearch.trim(), {
+    skip: userSearch.trim().length < 2,
+  });
+  const foundUsers = usersData?.data ?? [];
+  const [sendMessage, { isLoading }] = useSendMessageMutation();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      setUserSearch('');
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, [open]);
+
+  async function handleSelectUser(userId: number) {
+    try {
+      const response = await sendMessage({
+        recipient_user_id: userId,
+        content: 'Hi! \uD83D\uDC4B',
+      }).unwrap();
+      onClose();
+      router.push(`/chats/${response.data.conversation_id}`);
+    } catch {
+      toast.error('Failed to start conversation');
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-24" onClick={onClose}>
+      <div
+        className="absolute inset-0"
+        style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+      />
+      <div
+        className="relative w-full max-w-sm rounded-xl shadow-2xl overflow-hidden"
+        style={{
+          backgroundColor: 'var(--color-surface-2)',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.06)]">
+          <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+            New Message
+          </span>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-md cursor-pointer transition-colors hover:bg-[var(--color-surface-3)]"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+        <div className="px-4 py-3">
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-lg"
+            style={{
+              backgroundColor: 'var(--color-surface-3)',
+              border: '1px solid rgba(255,255,255,0.06)',
+            }}
+          >
+            <Search size={14} style={{ color: 'var(--color-text-muted)' }} />
+            <input
+              ref={inputRef}
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+              placeholder="Search by email..."
+              className="flex-1 bg-transparent border-none outline-none text-sm"
+              style={{ color: 'var(--color-text-primary)' }}
+            />
+          </div>
+        </div>
+        <div className="max-h-60 overflow-y-auto px-2 pb-3">
+          {userSearch.trim().length < 2 ? (
+            <p className="text-xs px-3 py-2" style={{ color: 'var(--color-text-muted)' }}>
+              Type at least 2 characters to search.
+            </p>
+          ) : foundUsers.length === 0 ? (
+            <p className="text-xs px-3 py-2" style={{ color: 'var(--color-text-muted)' }}>
+              No users found.
+            </p>
+          ) : (
+            foundUsers.map((u) => (
+              <button
+                key={u.user_id}
+                onClick={() => handleSelectUser(u.user_id)}
+                disabled={isLoading}
+                className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-left cursor-pointer transition-colors hover:bg-[var(--color-surface-3)] disabled:opacity-50"
+              >
+                <Avatar name={u.display_name} size={32} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm truncate" style={{ color: 'var(--color-text-primary)' }}>
+                    {u.display_name}
+                  </p>
+                  <p className="text-xs truncate" style={{ color: 'var(--color-text-secondary)' }}>
+                    {u.email}
+                  </p>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- main page ---------- */
 
 export default function ChatsPage() {
@@ -221,6 +344,7 @@ export default function ChatsPage() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [cacheCountdown, setCacheCountdown] = useState(0);
+  const [newMessageOpen, setNewMessageOpen] = useState(false);
 
   // Cache countdown timer (use a generic 7-day estimate when no conversation selected)
   useEffect(() => {
@@ -284,7 +408,8 @@ export default function ChatsPage() {
               </MonoLabel>
             </div>
             <button
-              className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 hover:bg-[var(--color-surface-3)]"
+              onClick={() => setNewMessageOpen(true)}
+              className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 cursor-pointer hover:bg-[var(--color-surface-3)]"
               style={{ color: 'var(--color-text-secondary)' }}
               title="New message"
             >
@@ -308,6 +433,8 @@ export default function ChatsPage() {
             </p>
           </div>
         </div>
+
+        <NewMessageDialog open={newMessageOpen} onClose={() => setNewMessageOpen(false)} />
       </div>
     );
   }
@@ -317,7 +444,7 @@ export default function ChatsPage() {
       className="flex h-full w-full flex-col"
       style={{ background: 'linear-gradient(180deg, var(--color-surface-0), var(--color-surface-1))' }}
     >
-      {/* ── Header ── */}
+      {/* -- Header -- */}
       <div className="px-[18px] pt-[18px] pb-[14px] border-b border-[rgba(255,255,255,0.04)]">
         <div className="flex items-baseline justify-between mb-3.5">
           <div>
@@ -328,11 +455,12 @@ export default function ChatsPage() {
               Messages
             </h1>
             <MonoLabel className="mt-0.5 inline-block" style={{ color: 'var(--color-text-muted)' } as React.CSSProperties}>
-              {activeCount} ACTIVE · {unreadCount} UNREAD
+              {activeCount} ACTIVE {unreadCount > 0 ? `\u00B7 ${unreadCount} UNREAD` : ''}
             </MonoLabel>
           </div>
           <button
-            className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 hover:bg-[var(--color-surface-3)]"
+            onClick={() => setNewMessageOpen(true)}
+            className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 cursor-pointer hover:bg-[var(--color-surface-3)]"
             style={{ color: 'var(--color-text-secondary)' }}
             title="New message"
           >
@@ -362,7 +490,7 @@ export default function ChatsPage() {
         </div>
       </div>
 
-      {/* ── Conversations scroll region ── */}
+      {/* -- Conversations scroll region -- */}
       <div className="flex-1 overflow-y-auto pb-3.5 kanban-scroll">
         {/* Section header */}
         <div className="mt-[18px]">
@@ -371,7 +499,7 @@ export default function ChatsPage() {
               DIRECT MESSAGES
             </MonoLabel>
             <span className="font-mono text-[10px] opacity-60" style={{ color: 'var(--color-text-muted)' }}>
-              ·
+              {'\u00B7'}
             </span>
             <MonoLabel className="text-[var(--color-text-muted)]">
               {String(filteredConversations.length).padStart(2, '0')}
@@ -405,7 +533,7 @@ export default function ChatsPage() {
         </div>
       </div>
 
-      {/* ── Footer: cache countdown + realtime indicator ── */}
+      {/* -- Footer: cache countdown + realtime indicator -- */}
       <div
         className="flex items-center gap-2.5 px-4 py-2.5 border-t border-[rgba(255,255,255,0.04)]"
         style={{ background: 'var(--color-surface-0)' }}
@@ -423,6 +551,8 @@ export default function ChatsPage() {
           REALTIME
         </MonoLabel>
       </div>
+
+      <NewMessageDialog open={newMessageOpen} onClose={() => setNewMessageOpen(false)} />
     </div>
   );
 }
