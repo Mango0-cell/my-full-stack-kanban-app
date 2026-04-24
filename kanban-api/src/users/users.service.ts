@@ -44,41 +44,13 @@ export class UsersService {
     return rows;
   }
 
-  async followUser(followerUserId: number, followedUserId: number, label?: string) {
-    if (followerUserId === followedUserId) {
-      throw new BadRequestException('Cannot follow yourself');
-    }
-
-    const followedUser = await this.db.query(
-      'SELECT user_id FROM users WHERE user_id = $1',
-      [followedUserId],
-    );
-
-    if (followedUser.rows.length === 0) {
-      throw new NotFoundException('User not found');
-    }
-
-    const normalizedLabel = (label || 'following').trim() || 'following';
-
+  async getPublicProfile(userId: number) {
     const { rows } = await this.db.query(
-      `INSERT INTO user_follows (follower_user_id, followed_user_id, label)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (follower_user_id, followed_user_id)
-       DO UPDATE SET label = EXCLUDED.label, updated_at = NOW()
-       RETURNING *`,
-      [followerUserId, followedUserId, normalizedLabel],
+      `SELECT user_id, email, display_name, avatar_url, bio, job_title, location, website_url, created_at
+       FROM users WHERE user_id = $1`,
+      [userId],
     );
-
-    await this.notificationsService.createNotification({
-      userId: followedUserId,
-      type: 'user_followed',
-      title: 'New follower label',
-      body: `A user followed you with label: ${normalizedLabel}`,
-      entityType: 'user',
-      entityId: followerUserId,
-      metadata: { follower_user_id: followerUserId },
-    });
-
+    if (!rows[0]) throw new NotFoundException('User not found');
     return rows[0];
   }
 

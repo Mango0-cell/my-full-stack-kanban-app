@@ -16,11 +16,12 @@ import { ColumnForm } from '@/components/forms/ColumnForm';
 import { CardDetailModal } from '@/components/board/CardDetailModal';
 import { CanceledView } from '@/components/board/CanceledView';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useGetProjectQuery, useDeleteProjectMutation } from '@/lib/store/api/projectsApi';
-import { useDeleteColumnMutation } from '@/lib/store/api/columnsApi';
+import { useGetProjectQuery, useDeleteProjectMutation, useListProjectsQuery } from '@/lib/store/api/projectsApi';
+import { useDeleteColumnMutation, useListColumnsQuery } from '@/lib/store/api/columnsApi';
 import { useListCardsQuery } from '@/lib/store/api/cardsApi';
 import { useGetMeQuery } from '@/lib/store/api/authApi';
 import { useRouter } from 'next/navigation';
+import { getRealtimeSocket, connectRealtime } from '@/lib/realtime/socket';
 import type { Card, Column } from '@/lib/types/api';
 
 type FilterMode = 'all' | 'today' | 'week' | 'month';
@@ -52,7 +53,45 @@ export default function BoardPage({ params }: Props) {
   const me = meData?.data;
   const [deleteProject, { isLoading: deletingProject }] = useDeleteProjectMutation();
   const [deleteColumn] = useDeleteColumnMutation();
-  const { data: cardsData } = useListCardsQuery(projectId);
+  const { data: cardsData, refetch: refetchCards } = useListCardsQuery(projectId);
+  const { refetch: refetchColumns } = useListColumnsQuery(projectId);
+  const { data: projectsListData } = useListProjectsQuery();
+
+  // Derive user role from the projects list (which includes member_role)
+  const userRole = projectsListData?.data?.find((p) => p.project_id === projectId)?.member_role;
+
+  // Realtime board listeners
+  useEffect(() => {
+    const socket = getRealtimeSocket();
+    connectRealtime();
+    socket.emit('room.project.join', { projectId: Number(projectId) });
+
+    let timer: NodeJS.Timeout;
+    const debouncedRefetch = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        refetchColumns();
+        refetchCards();
+      }, 300);
+    };
+
+    const boardEvents = [
+      'board.column.created',
+      'board.column.updated',
+      'board.column.deleted',
+      'board.card.created',
+      'board.card.updated',
+      'board.card.deleted',
+      'board.card.moved',
+    ];
+
+    boardEvents.forEach((event) => socket.on(event, debouncedRefetch));
+
+    return () => {
+      clearTimeout(timer);
+      boardEvents.forEach((event) => socket.off(event, debouncedRefetch));
+    };
+  }, [projectId, refetchColumns, refetchCards]);
 
   // Modal state
   const [cardFormColumnId, setCardFormColumnId] = useState<number | null>(null);
@@ -294,6 +333,7 @@ export default function BoardPage({ params }: Props) {
           onCancelColumn={handleCancelColumn}
           filterMode={filterMode}
           searchQuery={searchQuery}
+          userRole={userRole}
         />
       </div>
 

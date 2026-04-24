@@ -6,14 +6,14 @@ import {
   Body,
   NotFoundException,
   Query,
-  Post,
+  Param,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { SearchUsersDto } from './dto/search-users.dto';
-import { FollowUserDto } from './dto/follow-user.dto';
 import { CurrentUser, JwtPayload } from '../common/decorators/current-user.decorator';
 
 @Controller('users')
@@ -46,15 +46,15 @@ export class UsersController {
     return { data: users, message: 'OK', error: null };
   }
 
-  @Post('follow')
-  async followUser(@CurrentUser() user: JwtPayload, @Body() dto: FollowUserDto) {
-    const follow = await this.usersService.followUser(user.userId, dto.followed_user_id, dto.label);
-    return { data: follow, message: 'User followed', error: null };
-  }
-
   @Delete('account')
   async deleteAccount(@CurrentUser() user: JwtPayload, @Body() dto: DeleteAccountDto) {
     await this.usersService.deleteAccount(user.userId, dto.password);
     return { data: null, message: 'Account deleted', error: null };
+  }
+
+  @Get(':id')
+  async getPublicProfile(@Param('id', ParseIntPipe) id: number) {
+    const profile = await this.usersService.getPublicProfile(id);
+    return { data: profile, message: 'OK', error: null };
   }
 }

@@ -13,7 +13,7 @@ import { useLoginMutation } from '@/lib/store/api/authApi';
 import { useAppDispatch } from '@/lib/hooks/redux';
 import { clearCredentials, setCredentials } from '@/lib/store/slices/authSlice';
 import { baseApi } from '@/lib/store/api/baseApi';
-import { disconnectRealtime } from '@/lib/realtime/socket';
+import { destroyRealtime } from '@/lib/realtime/socket';
 import { clearClientSessionState } from '@/lib/utils/sessionState';
 
 const loginSchema = z.object({
@@ -37,7 +37,7 @@ export default function LoginPage() {
 
   async function onSubmit(data: LoginForm) {
     try {
-      disconnectRealtime();
+      destroyRealtime();
       dispatch(clearCredentials());
       dispatch(baseApi.util.resetApiState());
       clearClientSessionState();

@@ -34,3 +34,8 @@ export function connectRealtime() {
 export function disconnectRealtime() {
   if (socket?.connected) socket.disconnect();
 }
+
+export function destroyRealtime() {
+  socket?.disconnect();
+  socket = null;
+}

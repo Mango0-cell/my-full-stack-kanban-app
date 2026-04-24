@@ -39,6 +39,7 @@ interface BoardDnDProps {
   onCancelColumn: (column: Column) => void;
   filterMode?: FilterMode;
   searchQuery?: string;
+  userRole?: string;
 }
 
 export function BoardDnD({
@@ -50,7 +51,9 @@ export function BoardDnD({
   onCancelColumn,
   filterMode = 'all',
   searchQuery = '',
+  userRole,
 }: BoardDnDProps) {
+  const isViewer = userRole === 'viewer';
   const { data: columnsData, isLoading: columnsLoading } = useListColumnsQuery(projectId);
   const { data: cardsData, isLoading: cardsLoading } = useListCardsQuery(projectId);
   const [updateColumn] = useUpdateColumnMutation();
@@ -110,9 +113,10 @@ export function BoardDnD({
 
   const [activeCard, setActiveCard] = useState<Card | null>(null);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-  );
+  const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 5 } });
+  const defaultSensors = useSensors(pointerSensor);
+  const noSensors = useSensors();
+  const sensors = isViewer ? noSensors : defaultSensors;
 
   const collisionDetectionStrategy = useCallback(
     (args: Parameters<typeof pointerWithin>[0]) => {
@@ -297,31 +301,34 @@ export function BoardDnD({
               onMoveColumn={handleMoveColumn}
               isFirst={idx === 0}
               isLast={idx === arr.length - 1}
+              userRole={userRole}
             />
           ))}
 
-        <button
-          onClick={onAddColumn}
-          className="w-[280px] shrink-0 py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98]"
-          style={{
-            backgroundColor: 'var(--color-surface-1)',
-            border: '1px dashed rgba(255,255,255,0.08)',
-            color: 'var(--color-text-secondary)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = 'rgba(99,102,241,0.4)';
-            e.currentTarget.style.color = 'var(--color-brand-400)';
-            e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.05)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-            e.currentTarget.style.color = 'var(--color-text-secondary)';
-            e.currentTarget.style.backgroundColor = 'var(--color-surface-1)';
-          }}
-        >
-          <Plus className="h-4 w-4" />
-          Add Column
-        </button>
+        {!isViewer && (
+          <button
+            onClick={onAddColumn}
+            className="w-[280px] shrink-0 py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98]"
+            style={{
+              backgroundColor: 'var(--color-surface-1)',
+              border: '1px dashed rgba(255,255,255,0.08)',
+              color: 'var(--color-text-secondary)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = 'rgba(99,102,241,0.4)';
+              e.currentTarget.style.color = 'var(--color-brand-400)';
+              e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.05)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+              e.currentTarget.style.color = 'var(--color-text-secondary)';
+              e.currentTarget.style.backgroundColor = 'var(--color-surface-1)';
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            Add Column
+          </button>
+        )}
       </div>
 
       <DragOverlay>

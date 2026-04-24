@@ -24,6 +24,7 @@ interface ColumnItemProps {
   isFirst?: boolean;
   isLast?: boolean;
   commentCounts?: Record<number, number>;
+  userRole?: string;
 }
 
 export function ColumnItem({
@@ -37,7 +38,9 @@ export function ColumnItem({
   isFirst = false,
   isLast = false,
   commentCounts = {},
+  userRole,
 }: ColumnItemProps) {
+  const isViewer = userRole === 'viewer';
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(column.name);
   const [savedOk, setSavedOk] = useState(false);
@@ -107,22 +110,24 @@ export function ColumnItem({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          <button
-            onClick={() => onAddCard(column.column_id)}
-            className="p-1.5 rounded-md transition-colors duration-150"
-            style={{ color: 'var(--color-text-secondary)' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = 'var(--color-text-primary)';
-              e.currentTarget.style.backgroundColor = 'var(--color-surface-3)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = 'var(--color-text-secondary)';
-              e.currentTarget.style.backgroundColor = 'transparent';
-            }}
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-          <DropdownMenu>
+          {!isViewer && (
+            <button
+              onClick={() => onAddCard(column.column_id)}
+              className="p-1.5 rounded-md transition-colors duration-150"
+              style={{ color: 'var(--color-text-secondary)' }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = 'var(--color-text-primary)';
+                e.currentTarget.style.backgroundColor = 'var(--color-surface-3)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--color-text-secondary)';
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          )}
+          {!isViewer && <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 className="p-1.5 rounded-md transition-colors duration-150"
@@ -174,7 +179,7 @@ export function ColumnItem({
                 Cancel column
               </DropdownMenuItem>
             </DropdownMenuContent>
-          </DropdownMenu>
+          </DropdownMenu>}
         </div>
       </div>
 
@@ -191,12 +196,13 @@ export function ColumnItem({
               card={card}
               onClick={onCardClick}
               commentCount={commentCounts[card.card_id]}
+              userRole={userRole}
             />
           ))}
         </SortableContext>
 
         {/* Empty column CTA */}
-        {cards.length === 0 && (
+        {cards.length === 0 && !isViewer && (
           <div
             className="border border-dashed rounded-lg p-6 flex flex-col items-center gap-2 mt-2 cursor-pointer transition-colors duration-200"
             style={{ borderColor: 'rgba(255,255,255,0.1)' }}
@@ -217,24 +223,26 @@ export function ColumnItem({
       </div>
 
       {/* Add card button */}
-      <div className="p-3 shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
-        <button
-          onClick={() => onAddCard(column.column_id)}
-          className="w-full flex items-center gap-1.5 px-3 py-2 rounded-md text-sm transition-colors duration-150"
-          style={{ color: 'var(--color-text-secondary)' }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.08)';
-            e.currentTarget.style.color = 'var(--color-brand-400)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-            e.currentTarget.style.color = 'var(--color-text-secondary)';
-          }}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Add card
-        </button>
-      </div>
+      {!isViewer && (
+        <div className="p-3 shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
+          <button
+            onClick={() => onAddCard(column.column_id)}
+            className="w-full flex items-center gap-1.5 px-3 py-2 rounded-md text-sm transition-colors duration-150"
+            style={{ color: 'var(--color-text-secondary)' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.08)';
+              e.currentTarget.style.color = 'var(--color-brand-400)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+              e.currentTarget.style.color = 'var(--color-text-secondary)';
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add card
+          </button>
+        </div>
+      )}
     </div>
   );
 }

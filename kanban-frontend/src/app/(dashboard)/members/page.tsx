@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -8,6 +8,8 @@ import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import { Search, UserPlus, Send, ShieldAlert, Trash2, Sparkles, Check, Info, FolderKanban, Calendar } from 'lucide-react';
 import { useGetMeQuery } from '@/lib/store/api/authApi';
+import { getRealtimeSocket, connectRealtime } from '@/lib/realtime/socket';
+import { useListNotificationsQuery } from '@/lib/store/api/notificationsApi';
 import {
   useListMembersQuery,
   useListProjectsQuery,
@@ -47,9 +49,31 @@ export default function MembersPage() {
   const { data: usersData } = useSearchUsersQuery(memberSearch.trim(), { skip: memberSearch.trim().length < 2 });
   const foundUsers = usersData?.data ?? [];
 
+  const { refetch: refetchNotifications } = useListNotificationsQuery(5);
   const [sendInvite, { isLoading: isSendingExternal }] = useSendInviteMutation();
   const [updateMemberRole] = useUpdateMemberRoleMutation();
   const [removeMember] = useRemoveMemberMutation();
+
+  const myMember = useMemo(
+    () => members.find((m) => m.user_id === me?.user_id),
+    [members, me?.user_id],
+  );
+  const myRole = myMember?.role_name;
+  const isAdminOrOwner = myRole === 'admin' || myRole === 'owner';
+
+  // Realtime listeners
+  useEffect(() => {
+    const socket = getRealtimeSocket();
+    connectRealtime();
+    const onInvitationAccepted = () => refetchMembers();
+    const onInvitationReceived = () => refetchNotifications();
+    socket.on('invitation.accepted', onInvitationAccepted);
+    socket.on('invitation.received', onInvitationReceived);
+    return () => {
+      socket.off('invitation.accepted', onInvitationAccepted);
+      socket.off('invitation.received', onInvitationReceived);
+    };
+  }, [refetchMembers, refetchNotifications]);
 
   const form = useForm<ExternalInviteForm>({
     resolver: zodResolver(externalInviteSchema),
@@ -94,6 +118,7 @@ export default function MembersPage() {
       form.reset();
       setExternalInviteOpen(false);
       refetchSentInvites();
+      refetchMembers();
     } catch {
       toast.error('Could not send invitation');
     }
@@ -114,6 +139,7 @@ export default function MembersPage() {
       setInternalInviteOpen(false);
       setMemberSearch('');
       refetchSentInvites();
+      refetchMembers();
     } catch {
       toast.error('Failed to send invitation');
     }
@@ -176,22 +202,24 @@ export default function MembersPage() {
             <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
               {activeProject?.project_name ?? 'Project members'}
             </h2>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setExternalInviteOpen(true)}
-                className="px-3 py-2 rounded-lg text-xs font-medium uppercase tracking-widest cursor-pointer transition-colors duration-200 hover:opacity-90"
-                style={{ backgroundColor: 'var(--color-surface-3)', color: 'var(--color-text-primary)' }}
-              >
-                Invite external member
-              </button>
-              <button
-                onClick={() => setInternalInviteOpen(true)}
-                className="px-3 py-2 rounded-lg text-xs font-medium uppercase tracking-widest cursor-pointer transition-colors duration-200 hover:opacity-90"
-                style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
-              >
-                Add member
-              </button>
-            </div>
+            {isAdminOrOwner && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setExternalInviteOpen(true)}
+                  className="px-3 py-2 rounded-lg text-xs font-medium uppercase tracking-widest cursor-pointer transition-colors duration-200 hover:opacity-90"
+                  style={{ backgroundColor: 'var(--color-surface-3)', color: 'var(--color-text-primary)' }}
+                >
+                  Invite external member
+                </button>
+                <button
+                  onClick={() => setInternalInviteOpen(true)}
+                  className="px-3 py-2 rounded-lg text-xs font-medium uppercase tracking-widest cursor-pointer transition-colors duration-200 hover:opacity-90"
+                  style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
+                >
+                  Add member
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -220,25 +248,44 @@ export default function MembersPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <select
-                    value={member.role_name}
-                    onChange={(e) => handleRoleChange(member.user_id, e.target.value as 'admin' | 'editor' | 'viewer')}
-                    disabled={member.user_id === me?.user_id}
-                    className="h-8 rounded-md px-2 text-xs"
-                    style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-primary)' }}
-                  >
-                    <option value="admin">admin</option>
-                    <option value="editor">editor</option>
-                    <option value="viewer">viewer</option>
-                  </select>
-                  <button
-                    disabled={member.user_id === me?.user_id}
-                    onClick={() => handleRemoveMember(member.user_id)}
-                    className="p-2 rounded-md disabled:opacity-40 cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)]"
-                    style={{ color: '#f87171' }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {isAdminOrOwner ? (
+                    <select
+                      value={member.role_name}
+                      onChange={(e) => handleRoleChange(member.user_id, e.target.value as 'admin' | 'editor' | 'viewer')}
+                      disabled={member.user_id === me?.user_id}
+                      className="h-8 rounded-md px-2 text-xs"
+                      style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-primary)' }}
+                    >
+                      <option value="admin">admin</option>
+                      <option value="editor">editor</option>
+                      <option value="viewer">viewer</option>
+                    </select>
+                  ) : (
+                    <span
+                      className="h-8 flex items-center px-2 text-xs rounded-md"
+                      style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-secondary)' }}
+                    >
+                      {member.role_name}
+                    </span>
+                  )}
+                  {isAdminOrOwner ? (
+                    <button
+                      disabled={member.user_id === me?.user_id && member.role_name === 'owner'}
+                      onClick={() => handleRemoveMember(member.user_id)}
+                      className="p-2 rounded-md disabled:opacity-40 cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)]"
+                      style={{ color: '#f87171' }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  ) : member.user_id === me?.user_id ? (
+                    <button
+                      onClick={() => handleRemoveMember(member.user_id)}
+                      className="p-2 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)] text-xs"
+                      style={{ color: '#f87171' }}
+                    >
+                      Leave
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ))}

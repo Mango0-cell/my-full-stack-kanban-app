@@ -11,7 +11,6 @@ import {
   MessageCircle,
   Search,
   User,
-  UserCheck,
   Users,
 } from 'lucide-react';
 import { MobileSidebarTrigger } from './MobileSidebar';
@@ -31,11 +30,10 @@ import {
   useMarkNotificationReadMutation,
 } from '@/lib/store/api/notificationsApi';
 import {
-  useFollowUserMutation,
   useSearchUsersQuery,
 } from '@/lib/store/api/usersApi';
 import { useSendMessageMutation } from '@/lib/store/api/chatApi';
-import { connectRealtime, disconnectRealtime } from '@/lib/realtime/socket';
+import { connectRealtime, destroyRealtime } from '@/lib/realtime/socket';
 import { clearClientSessionState } from '@/lib/utils/sessionState';
 
 export function Navbar() {
@@ -52,7 +50,6 @@ export function Navbar() {
   const { data: usersData } = useSearchUsersQuery(userSearch.trim(), {
     skip: userSearch.trim().length < 2,
   });
-  const [followUser] = useFollowUserMutation();
   const [sendMessage, { isLoading: isMessageSending }] = useSendMessageMutation();
 
   useEffect(() => {
@@ -70,19 +67,11 @@ export function Navbar() {
 
   function handleLogout() {
     Cookies.remove('kanban_token');
-    disconnectRealtime();
+    destroyRealtime();
     clearClientSessionState();
     dispatch(clearCredentials());
     dispatch(baseApi.util.resetApiState());
     router.push('/login');
-  }
-
-  async function handleFollow(targetUserId: number) {
-    try {
-      await followUser({ followed_user_id: targetUserId, label: 'following' }).unwrap();
-    } catch {
-      // noop
-    }
   }
 
   async function handleSendMessage(targetUserId: number) {
@@ -160,14 +149,6 @@ export function Navbar() {
                       <p className="text-xs truncate" style={{ color: 'var(--color-text-secondary)' }}>{u.email}</p>
                     </div>
                     <div className="flex items-center gap-1">
-                      <button
-                        className="p-1.5 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)]"
-                        title="Follow user"
-                        onClick={() => handleFollow(u.user_id)}
-                        style={{ color: 'var(--color-brand-400)' }}
-                      >
-                        <UserCheck className="h-4 w-4" />
-                      </button>
                       <button
                         className="p-1.5 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)]"
                         title="Send message"

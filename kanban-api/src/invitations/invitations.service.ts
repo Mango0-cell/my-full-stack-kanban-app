@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -20,8 +22,11 @@ export class InvitationsService {
   constructor(
     private readonly db: DatabaseService,
     private readonly config: ConfigService,
+    @Inject(forwardRef(() => ProjectAccessService))
     private readonly projectAccess: ProjectAccessService,
+    @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => RealtimeEventsService))
     private readonly realtimeEvents: RealtimeEventsService,
     private readonly mailService: MailService,
   ) {}
@@ -232,6 +237,15 @@ export class InvitationsService {
     );
 
     return rows;
+  }
+
+  async acceptByToken(token: string, userId: number) {
+    const { rows } = await this.db.query(
+      `SELECT invitation_id FROM invitations WHERE token = $1 AND status = 'pending'`,
+      [token],
+    );
+    if (!rows[0]) throw new NotFoundException('Invitation not found or already processed');
+    return this.acceptInvitation(rows[0].invitation_id, userId);
   }
 
   async acceptInvitation(invitationId: number, userId: number) {

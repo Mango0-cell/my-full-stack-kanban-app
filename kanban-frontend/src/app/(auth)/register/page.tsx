@@ -13,7 +13,7 @@ import { useRegisterMutation } from '@/lib/store/api/authApi';
 import { useAppDispatch } from '@/lib/hooks/redux';
 import { clearCredentials, setCredentials } from '@/lib/store/slices/authSlice';
 import { baseApi } from '@/lib/store/api/baseApi';
-import { disconnectRealtime } from '@/lib/realtime/socket';
+import { destroyRealtime } from '@/lib/realtime/socket';
 import { clearClientSessionState } from '@/lib/utils/sessionState';
 
 const registerSchema = z.object({
@@ -45,7 +45,7 @@ export default function RegisterPage() {
 
   async function onSubmit(data: RegisterForm) {
     try {
-      disconnectRealtime();
+      destroyRealtime();
       dispatch(clearCredentials());
       dispatch(baseApi.util.resetApiState());
       clearClientSessionState();

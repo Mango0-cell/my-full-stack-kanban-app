@@ -30,6 +30,14 @@ export const inviteApi = baseApi.injectEndpoints({
       query: (id) => ({ url: `/invitations/${id}/accept`, method: 'POST' }),
       invalidatesTags: ['Invitation', 'Project', 'Member', 'Notification'],
     }),
+    acceptByToken: build.mutation<ApiResponse<Invitation>, string>({
+      query: (token) => ({
+        url: '/invitations/accept-by-token',
+        method: 'POST',
+        body: { token },
+      }),
+      invalidatesTags: ['Invitation', 'Project', 'Member', 'Notification'],
+    }),
   }),
 });
 
@@ -38,4 +46,5 @@ export const {
   useListInvitesQuery,
   useListSentInvitesQuery,
   useAcceptInviteMutation,
+  useAcceptByTokenMutation,
 } = inviteApi;

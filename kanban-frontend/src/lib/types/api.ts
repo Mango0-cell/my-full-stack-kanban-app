@@ -95,15 +95,6 @@ export interface UserSearchResult {
   avatar_url?: string;
 }
 
-export interface UserFollow {
-  follow_id: number;
-  follower_user_id: number;
-  followed_user_id: number;
-  label: string;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface Conversation {
   conversation_id: number;
   updated_at: string;

@@ -9,7 +9,7 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger, forwardRef } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { RealtimeAuthService, SocketJwtPayload } from './realtime-auth.service';
 import { RealtimeEventsService } from './realtime-events.service';
@@ -33,6 +33,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   constructor(
     private readonly realtimeAuth: RealtimeAuthService,
     private readonly realtimeEvents: RealtimeEventsService,
+    @Inject(forwardRef(() => ProjectAccessService))
     private readonly projectAccess: ProjectAccessService,
     private readonly db: DatabaseService,
   ) {}

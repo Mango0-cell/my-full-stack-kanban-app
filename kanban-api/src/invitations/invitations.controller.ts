@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
 import { CurrentUser, JwtPayload } from '../common/decorators/current-user.decorator';
 import { InvitationsService } from './invitations.service';
 import { CreateInvitationDto } from './dto/create-invitation.dto';
@@ -32,6 +32,13 @@ export class InvitationsController {
   async listPending(@CurrentUser() user: JwtPayload) {
     const invitations = await this.invitationsService.listPendingInvitations(user.userId);
     return { data: invitations, message: 'OK', error: null };
+  }
+
+  @Post('accept-by-token')
+  async acceptByToken(@Body('token') token: string, @CurrentUser() user: JwtPayload) {
+    if (!token) throw new BadRequestException('Token is required');
+    const invitation = await this.invitationsService.acceptByToken(token, user.userId);
+    return { data: invitation, message: 'Invitation accepted', error: null };
   }
 
   @Post(':id/accept')

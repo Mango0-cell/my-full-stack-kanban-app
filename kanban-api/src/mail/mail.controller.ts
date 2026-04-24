@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Inject, Post, forwardRef } from '@nestjs/common';
 import { MailService } from './mail.service';
 import { SendInviteDto } from './dto/send-invite.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -9,6 +9,7 @@ import { UsersService } from '../users/users.service';
 export class MailController {
   constructor(
     private readonly mail: MailService,
+    @Inject(forwardRef(() => UsersService))
     private readonly users: UsersService,
   ) {}
 

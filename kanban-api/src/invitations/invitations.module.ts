@@ -8,7 +8,7 @@ import { InvitationsController } from './invitations.controller';
 import { InvitationsService } from './invitations.service';
 
 @Module({
-  imports: [DatabaseModule, forwardRef(() => ProjectsModule), NotificationsModule, RealtimeModule, MailModule],
+  imports: [DatabaseModule, forwardRef(() => ProjectsModule), forwardRef(() => NotificationsModule), forwardRef(() => RealtimeModule), MailModule],
   controllers: [InvitationsController],
   providers: [InvitationsService],
   exports: [InvitationsService],

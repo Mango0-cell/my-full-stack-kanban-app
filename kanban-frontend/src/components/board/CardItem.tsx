@@ -9,6 +9,7 @@ interface CardItemProps {
   card: Card;
   onClick: (card: Card) => void;
   commentCount?: number;
+  userRole?: string;
 }
 
 const priorityConfig = {
@@ -18,7 +19,8 @@ const priorityConfig = {
   urgent: { border: 'border-l-red-500',     label: 'URGENT', labelClass: 'bg-red-500/15 text-red-400 border-red-500/25' },
 };
 
-export function CardItem({ card, onClick, commentCount = 0 }: CardItemProps) {
+export function CardItem({ card, onClick, commentCount = 0, userRole }: CardItemProps) {
+  const isViewer = userRole === 'viewer';
   const {
     attributes,
     listeners,
@@ -26,7 +28,7 @@ export function CardItem({ card, onClick, commentCount = 0 }: CardItemProps) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: card.card_id, data: { type: 'card', card } });
+  } = useSortable({ id: card.card_id, data: { type: 'card', card }, disabled: isViewer });
 
   const style = {
     transform: CSS.Transform.toString(transform),
