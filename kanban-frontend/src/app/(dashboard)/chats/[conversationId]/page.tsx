@@ -277,7 +277,7 @@ export default function ConversationPage({ params }: Props) {
         {/* Back button (mobile) */}
         <Link
           href="/chats"
-          className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 hover:bg-[var(--color-surface-3)] md:hidden"
+          className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 cursor-pointer hover:bg-[var(--color-surface-3)] md:hidden"
           style={{ color: 'var(--color-text-secondary)' }}
         >
           <ArrowLeft size={16} />

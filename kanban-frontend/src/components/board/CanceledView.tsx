@@ -388,7 +388,7 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
               color: 'var(--color-text-secondary)',
             }}
           >
-            {totalCards} cards
+            {entries.length} columns, {totalCards} cards
           </span>
         </div>
         <button

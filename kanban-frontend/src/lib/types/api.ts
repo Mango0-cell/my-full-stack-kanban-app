@@ -35,6 +35,9 @@ export interface ProjectMember {
   email: string;
   avatar_url?: string;
   joined_at: string;
+  membership_status: 'joined' | 'pending';
+  invitation_id?: number;
+  invitation_status?: string;
 }
 
 export interface Column {

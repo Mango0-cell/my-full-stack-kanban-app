@@ -17,7 +17,7 @@ import {
   useUpdateMemberRoleMutation,
 } from '@/lib/store/api/projectsApi';
 import { useSearchUsersQuery } from '@/lib/store/api/usersApi';
-import { useListSentInvitesQuery, useSendInviteMutation } from '@/lib/store/api/inviteApi';
+import { useSendInviteMutation } from '@/lib/store/api/inviteApi';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const externalInviteSchema = z.object({
@@ -41,8 +41,17 @@ export default function MembersPage() {
   const { data: membersData, refetch: refetchMembers } = useListMembersQuery(activeProjectId ?? 0, {
     skip: !activeProjectId,
   });
-  const members = membersData?.data ?? [];
-  const { data: sentInvitesData, refetch: refetchSentInvites } = useListSentInvitesQuery();
+  const rawMembers = membersData?.data ?? [];
+
+  // Sort: joined first, then pending
+  const members = useMemo(
+    () => [...rawMembers].sort((a, b) => {
+      if (a.membership_status === 'joined' && b.membership_status === 'pending') return -1;
+      if (a.membership_status === 'pending' && b.membership_status === 'joined') return 1;
+      return 0;
+    }),
+    [rawMembers],
+  );
 
   const [externalInviteOpen, setExternalInviteOpen] = useState(false);
   const [internalInviteOpen, setInternalInviteOpen] = useState(false);
@@ -56,16 +65,26 @@ export default function MembersPage() {
   const [internalInviteRole, setInternalInviteRole] = useState<InviteRole>('viewer');
 
   const { refetch: refetchNotifications } = useListNotificationsQuery(5);
-  const [sendInvite, { isLoading: isSendingExternal }] = useSendInviteMutation();
+  const [sendInvite, { isLoading: isSendingInvite }] = useSendInviteMutation();
   const [updateMemberRole] = useUpdateMemberRoleMutation();
   const [removeMember] = useRemoveMemberMutation();
 
   const myMember = useMemo(
-    () => members.find((m) => m.user_id === me?.user_id),
+    () => members.find((m) => m.user_id === me?.user_id && m.membership_status === 'joined'),
     [members, me?.user_id],
   );
   const myRole = myMember?.role_name;
   const isAdminOrOwner = myRole === 'admin' || myRole === 'owner';
+
+  // Derive sets for the "Add member" dialog
+  const memberEmails = useMemo(
+    () => new Set(members.filter((m) => m.membership_status === 'joined').map((m) => m.email.toLowerCase())),
+    [members],
+  );
+  const pendingEmails = useMemo(
+    () => new Set(members.filter((m) => m.membership_status === 'pending').map((m) => m.email.toLowerCase())),
+    [members],
+  );
 
   // Realtime listeners
   useEffect(() => {
@@ -73,14 +92,12 @@ export default function MembersPage() {
     connectRealtime();
     const onInvitationAccepted = () => {
       refetchMembers();
-      refetchSentInvites();
     };
     const onInvitationReceived = () => {
       refetchNotifications();
-      refetchSentInvites();
+      refetchMembers();
     };
     const onInvitationUpdated = () => {
-      refetchSentInvites();
       refetchMembers();
     };
     socket.on('invitation.accepted', onInvitationAccepted);
@@ -91,7 +108,7 @@ export default function MembersPage() {
       socket.off('invitation.received', onInvitationReceived);
       socket.off('invitation.updated', onInvitationUpdated);
     };
-  }, [refetchMembers, refetchNotifications, refetchSentInvites]);
+  }, [refetchMembers, refetchNotifications]);
 
   const form = useForm<ExternalInviteForm>({
     resolver: zodResolver(externalInviteSchema),
@@ -102,21 +119,11 @@ export default function MembersPage() {
     () => projects.find((p) => p.project_id === activeProjectId),
     [projects, activeProjectId],
   );
-  const activeProjectPendingInvites = useMemo(() => {
-    if (!activeProjectId) return [];
-    return (sentInvitesData?.data ?? []).filter(
-      (invite) => invite.project_id === activeProjectId && invite.status === 'pending',
-    );
-  }, [activeProjectId, sentInvitesData?.data]);
 
-  const memberEmails = useMemo(
-    () => new Set(members.map((member) => member.email.toLowerCase())),
+  // Count joined members for the sidebar
+  const joinedCount = useMemo(
+    () => members.filter((m) => m.membership_status === 'joined').length,
     [members],
-  );
-
-  const pendingInviteEmails = useMemo(
-    () => new Set(activeProjectPendingInvites.map((invite) => invite.invitee_email.toLowerCase())),
-    [activeProjectPendingInvites],
   );
 
   async function onSubmitExternalInvite(values: ExternalInviteForm) {
@@ -136,7 +143,6 @@ export default function MembersPage() {
       form.reset();
       setExternalInviteRole('viewer');
       setExternalInviteOpen(false);
-      refetchSentInvites();
       refetchMembers();
     } catch (err: unknown) {
       const apiErr = err as { data?: { message?: string } } | undefined;
@@ -159,7 +165,6 @@ export default function MembersPage() {
       setInternalInviteOpen(false);
       setMemberSearch('');
       setInternalInviteRole('viewer');
-      refetchSentInvites();
       refetchMembers();
     } catch (err: unknown) {
       const apiErr = err as { data?: { message?: string } } | undefined;
@@ -198,6 +203,7 @@ export default function MembersPage() {
         Select a project to manage members.
       </p>
 
+      {/* Project selector tabs */}
       <div className="overflow-x-auto pb-2 mb-6">
         <div className="flex items-center gap-3 min-w-max">
           {projects.map((p) => (
@@ -219,6 +225,7 @@ export default function MembersPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Main member list */}
         <div className="lg:col-span-8">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
@@ -244,107 +251,109 @@ export default function MembersPage() {
             )}
           </div>
 
+          {/* Unified member list (joined + pending) */}
           <div className="space-y-2">
-            {members.map((member) => (
-              <div
-                key={member.user_id}
-                className="p-3 rounded-xl flex items-center justify-between"
-                style={{ backgroundColor: 'var(--color-surface-2)', border: '1px solid rgba(255,255,255,0.06)' }}
-              >
-                <div>
-                  <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                    {member.display_name} {member.user_id === me?.user_id ? '(You)' : ''}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{member.email}</p>
-                    <span
-                      className="px-1.5 py-0.5 rounded-sm text-[10px] font-semibold uppercase tracking-wide"
-                      style={{
-                        backgroundColor: 'rgba(16,185,129,0.15)',
-                        color: 'var(--color-success)',
-                        border: '1px solid rgba(16,185,129,0.25)',
-                      }}
-                    >
-                      Joined
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {isAdminOrOwner ? (
-                    <select
-                      value={member.role_name}
-                      onChange={(e) => handleRoleChange(member.user_id, e.target.value as 'admin' | 'editor' | 'viewer')}
-                      disabled={member.user_id === me?.user_id}
-                      className="h-8 rounded-md px-2 text-xs cursor-pointer"
-                      style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-primary)' }}
-                    >
-                      <option value="admin">admin</option>
-                      <option value="editor">editor</option>
-                      <option value="viewer">viewer</option>
-                    </select>
-                  ) : (
-                    <span
-                      className="h-8 flex items-center px-2 text-xs rounded-md"
-                      style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-secondary)' }}
-                    >
-                      {member.role_name}
-                    </span>
-                  )}
-                  {isAdminOrOwner ? (
-                    <button
-                      disabled={member.user_id === me?.user_id && member.role_name === 'owner'}
-                      onClick={() => handleRemoveMember(member.user_id)}
-                      className="p-2 rounded-md disabled:opacity-40 cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)]"
-                      style={{ color: '#f87171' }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  ) : member.user_id === me?.user_id ? (
-                    <button
-                      onClick={() => handleRemoveMember(member.user_id)}
-                      className="p-2 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)] text-xs"
-                      style={{ color: '#f87171' }}
-                    >
-                      Leave
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ))}
-            {activeProjectPendingInvites
-              .filter((invite) => !memberEmails.has(invite.invitee_email.toLowerCase()))
-              .map((invite) => (
+            {members.map((member) => {
+              const isJoined = member.membership_status === 'joined';
+              const isPending = member.membership_status === 'pending';
+              const isOwnerRow = member.role_name === 'owner';
+              const isMe = member.user_id === me?.user_id;
+
+              return (
                 <div
-                  key={`pending-${invite.invitation_id}`}
+                  key={isJoined ? `member-${member.user_id}` : `pending-${member.invitation_id ?? member.user_id}`}
                   className="p-3 rounded-xl flex items-center justify-between"
                   style={{ backgroundColor: 'var(--color-surface-2)', border: '1px solid rgba(255,255,255,0.06)' }}
                 >
                   <div>
                     <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                      Pending invitation
+                      {isJoined ? member.display_name : (member.display_name || 'Pending invitation')}
+                      {isMe && isJoined ? ' (You)' : ''}
                     </p>
                     <div className="flex items-center gap-2">
-                      <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{invite.invitee_email}</p>
-                      <span
-                        className="px-1.5 py-0.5 rounded-sm text-[10px] font-semibold uppercase tracking-wide"
-                        style={{
-                          backgroundColor: 'rgba(245,158,11,0.12)',
-                          color: 'var(--color-warning)',
-                          border: '1px solid rgba(245,158,11,0.25)',
-                        }}
-                      >
-                        Pending
-                      </span>
+                      <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{member.email}</p>
+                      {isJoined ? (
+                        <span
+                          className="px-1.5 py-0.5 rounded-sm text-[10px] font-semibold uppercase tracking-wide"
+                          style={{
+                            backgroundColor: 'rgba(16,185,129,0.15)',
+                            color: 'var(--color-success)',
+                            border: '1px solid rgba(16,185,129,0.25)',
+                          }}
+                        >
+                          Joined
+                        </span>
+                      ) : isPending ? (
+                        <span
+                          className="px-1.5 py-0.5 rounded-sm text-[10px] font-semibold uppercase tracking-wide"
+                          style={{
+                            backgroundColor: 'rgba(245,158,11,0.12)',
+                            color: 'var(--color-warning)',
+                            border: '1px solid rgba(245,158,11,0.25)',
+                          }}
+                        >
+                          Pending
+                        </span>
+                      ) : null}
                     </div>
                   </div>
-                  <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                    {invite.role_name ?? 'viewer'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {/* Role display / selector */}
+                    {isJoined && isAdminOrOwner ? (
+                      <select
+                        value={member.role_name}
+                        onChange={(e) => handleRoleChange(member.user_id, e.target.value as 'admin' | 'editor' | 'viewer')}
+                        disabled={isOwnerRow}
+                        className="h-8 rounded-md px-2 text-xs cursor-pointer"
+                        style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-primary)' }}
+                      >
+                        <option value="admin">admin</option>
+                        <option value="editor">editor</option>
+                        <option value="viewer">viewer</option>
+                      </select>
+                    ) : (
+                      <span
+                        className="h-8 flex items-center px-2 text-xs rounded-md"
+                        style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-secondary)' }}
+                      >
+                        {member.role_name}
+                      </span>
+                    )}
+
+                    {/* Remove / Leave button */}
+                    {isJoined && isAdminOrOwner && !isOwnerRow ? (
+                      <button
+                        onClick={() => handleRemoveMember(member.user_id)}
+                        className="p-2 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)]"
+                        style={{ color: '#f87171' }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    ) : isJoined && isMe && !isOwnerRow ? (
+                      <button
+                        onClick={() => handleRemoveMember(member.user_id)}
+                        className="p-2 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)] text-xs"
+                        style={{ color: '#f87171' }}
+                      >
+                        Leave
+                      </button>
+                    ) : isOwnerRow ? (
+                      <button
+                        disabled
+                        className="p-2 rounded-md disabled:opacity-40 cursor-not-allowed"
+                        style={{ color: '#f87171' }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-              ))}
+              );
+            })}
           </div>
         </div>
 
+        {/* Right sidebar */}
         <div className="lg:col-span-4 space-y-6">
           <div className="p-6 rounded-xl relative overflow-hidden"
                style={{ backgroundColor: 'var(--color-surface-3)', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -394,7 +403,7 @@ export default function MembersPage() {
               <h5 className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>Team Usage</h5>
               <span className="text-[10px] font-medium uppercase tracking-widest"
                     style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>
-                {members.length} members
+                {joinedCount} members
               </span>
             </div>
             <div className="w-full h-1.5 rounded-full mb-2 overflow-hidden" style={{ backgroundColor: 'var(--color-surface-4)' }}>
@@ -464,11 +473,11 @@ export default function MembersPage() {
             />
             <button
               type="submit"
-              disabled={isSendingExternal}
+              disabled={isSendingInvite}
               className="h-10 px-4 rounded-md text-sm font-medium disabled:opacity-50 cursor-pointer transition-colors duration-200 hover:opacity-90"
               style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
             >
-              {isSendingExternal ? 'Sending...' : 'Send invitation'}
+              {isSendingInvite ? 'Sending...' : 'Send invitation'}
             </button>
           </form>
         </DialogContent>
@@ -519,7 +528,7 @@ export default function MembersPage() {
                   >
                     Joined
                   </span>
-                ) : pendingInviteEmails.has(u.email.toLowerCase()) ? (
+                ) : pendingEmails.has(u.email.toLowerCase()) ? (
                   <span
                     className="px-2 py-1 text-xs rounded-md"
                     style={{ color: 'var(--color-warning)', backgroundColor: 'rgba(245,158,11,0.12)' }}
@@ -529,7 +538,7 @@ export default function MembersPage() {
                 ) : (
                   <button
                     onClick={() => handleAddInternalMember(u.email)}
-                    disabled={isSendingExternal}
+                    disabled={isSendingInvite}
                     className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs disabled:opacity-50 cursor-pointer transition-colors duration-200 hover:opacity-90"
                     style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
                   >
