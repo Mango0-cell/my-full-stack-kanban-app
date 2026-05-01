@@ -40,9 +40,9 @@ export class MailService {
     to: string;
     inviterName: string;
     message?: string;
-    acceptUrl?: string;
+    frontendUrl?: string;
   }): Promise<void> {
-    const appUrl = this.config.get<string>('APP_URL', 'https://kanban-app-full-stack.vercel.app');
+    const appUrl = 'https://kanban-app-full-stack.vercel.app';
     const fromName = this.config.get<string>('SMTP_FROM_NAME', 'Kanban Flow');
     const fromAddr = this.config.get<string>('SMTP_FROM', 'no-reply@kanbanflow.app');
 
@@ -62,7 +62,7 @@ export class MailService {
     }
   }
 
-  private buildInviteHtml(p: { to: string; inviterName: string; message?: string; appUrl: string; acceptUrl?: string }) {
+  private buildInviteHtml(p: { to: string; inviterName: string; message?: string; appUrl: string; frontendUrl?: string }) {
     const msgBlock = p.message
       ? `<div style="margin:24px 0;padding:16px 20px;background:#1a1f2e;border-left:3px solid #6366f1;border-radius:4px;color:#a5b4fc;font-size:14px;line-height:1.6;">${p.message}</div>`
       : '';
@@ -89,9 +89,9 @@ export class MailService {
             Kanban Flow helps teams organize work visually — drag and drop tasks, track progress, and ship faster together.
           </p>
           <div style="text-align:center;">
-            <a href="${p.acceptUrl || `${p.appUrl}/register?email=${encodeURIComponent(p.to)}`}"
+            <a href="${p.frontendUrl || p.appUrl}"
                style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:15px;font-weight:600;letter-spacing:-0.2px;">
-              Accept Invitation
+              Open Kanban Flow
             </a>
           </div>
         </td></tr>
@@ -109,9 +109,9 @@ export class MailService {
 </html>`;
   }
 
-  private buildInviteText(p: { to: string; inviterName: string; message?: string; appUrl: string; acceptUrl?: string }) {
+  private buildInviteText(p: { to: string; inviterName: string; message?: string; appUrl: string; frontendUrl?: string }) {
     const msg = p.message ? `\n"${p.message}"\n` : '';
-    const inviteUrl = p.acceptUrl || `${p.appUrl}/register?email=${encodeURIComponent(p.to)}`;
-    return `You're invited to Kanban Flow!\n\n${p.inviterName} has invited you to collaborate.\n${msg}\nAccept your invitation: ${inviteUrl}\n\nIf you weren't expecting this, ignore this email.`;
+    const inviteUrl = p.frontendUrl || p.appUrl;
+    return `You're invited to Kanban Flow!\n\n${p.inviterName} has invited you to collaborate.\n${msg}\nOpen the app: ${inviteUrl}\n\nIf you weren't expecting this, ignore this email.`;
   }
 }

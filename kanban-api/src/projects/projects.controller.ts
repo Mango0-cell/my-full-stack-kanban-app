@@ -90,6 +90,15 @@ export class ProjectsController {
     return { data: member, message: 'Role updated', error: null };
   }
 
+  @Post(':id/leave')
+  async leave(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.projectsService.leaveProject(id, user.userId);
+    return { data: null, message: 'Left project', error: null };
+  }
+
   @Delete(':id/members/:uid')
   async removeMember(
     @Param('id', ParseIntPipe) id: number,

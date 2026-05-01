@@ -4,9 +4,10 @@ import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
 import { ProjectAccessService } from './project-access.service';
 import { InvitationsModule } from '../invitations/invitations.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
-  imports: [DatabaseModule, forwardRef(() => InvitationsModule)],
+  imports: [DatabaseModule, forwardRef(() => InvitationsModule), forwardRef(() => RealtimeModule)],
   controllers: [ProjectsController],
   providers: [ProjectsService, ProjectAccessService],
   exports: [ProjectsService, ProjectAccessService],

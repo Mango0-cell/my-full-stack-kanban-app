@@ -24,9 +24,24 @@ export class RealtimeAuthService {
     }
 
     try {
-      const decoded = jwt.verify(token, secret) as SocketJwtPayload;
+      const decoded = jwt.verify(token, secret) as Record<string, unknown>;
+
+      // Strict payload shape validation — reject malformed tokens
+      if (
+        typeof decoded !== 'object' ||
+        decoded === null ||
+        typeof decoded.userId !== 'number' ||
+        !Number.isInteger(decoded.userId) ||
+        decoded.userId < 1 ||
+        typeof decoded.email !== 'string' ||
+        decoded.email.length === 0
+      ) {
+        throw new UnauthorizedException('Malformed token payload');
+      }
+
       return { userId: decoded.userId, email: decoded.email };
-    } catch {
+    } catch (err) {
+      if (err instanceof UnauthorizedException) throw err;
       throw new UnauthorizedException('Invalid or expired token');
     }
   }

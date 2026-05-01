@@ -8,7 +8,6 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../database/database.service';
 import { ProjectAccessService } from '../projects/project-access.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -21,7 +20,6 @@ export class InvitationsService {
 
   constructor(
     private readonly db: DatabaseService,
-    private readonly config: ConfigService,
     @Inject(forwardRef(() => ProjectAccessService))
     private readonly projectAccess: ProjectAccessService,
     @Inject(forwardRef(() => NotificationsService))
@@ -96,11 +94,7 @@ export class InvitationsService {
 
     const token = randomUUID();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    const landingUrl = this.config.get<string>(
-      'INVITATION_LANDING_URL',
-      'https://kanban-app-full-stack.vercel.app',
-    );
-    const acceptUrl = `${landingUrl}/invitations/accept?token=${encodeURIComponent(token)}`;
+    const landingUrl = 'https://kanban-app-full-stack.vercel.app';
 
     const { rows } = await this.db.query(
       `INSERT INTO invitations (
@@ -150,16 +144,19 @@ export class InvitationsService {
 
     const inviterName = inviterResult.rows[0]?.display_name || inviterResult.rows[0]?.email || 'A teammate';
 
-    try {
-      await this.mailService.sendInvite({
-        to: inviteeEmail,
-        inviterName,
-        message: dto.message,
-        acceptUrl,
-      });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown email provider error';
-      this.logger.error(`Invitation email failed for ${inviteeEmail}: ${errorMessage}`);
+    // External invitation email: send only message + frontend URL (no tokenized link in email body).
+    if (!inviteeUserId) {
+      try {
+        await this.mailService.sendInvite({
+          to: inviteeEmail,
+          inviterName,
+          message: dto.message,
+          frontendUrl: landingUrl,
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown email provider error';
+        this.logger.error(`Invitation email failed for ${inviteeEmail}: ${errorMessage}`);
+      }
     }
 
     return invitation;
@@ -239,6 +236,91 @@ export class InvitationsService {
     return rows;
   }
 
+  async cancelInvitation(invitationId: number, userId: number) {
+    const { rows } = await this.db.query(
+      `SELECT i.*, pm.role_id
+       FROM invitations i
+       LEFT JOIN project_members pm ON pm.project_id = i.project_id AND pm.user_id = $2
+       WHERE i.invitation_id = $1`,
+      [invitationId, userId],
+    );
+    if (rows.length === 0) throw new NotFoundException('Invitation not found');
+    const inv = rows[0];
+    if (inv.status !== 'pending') throw new BadRequestException('Invitation is not pending');
+
+    const isInviter = inv.inviter_user_id === userId;
+    if (!isInviter) {
+      await this.projectAccess.assertOwnerOrAdmin(inv.project_id, userId);
+    }
+
+    await this.db.query(
+      `UPDATE invitations SET status = 'declined', updated_at = NOW() WHERE invitation_id = $1`,
+      [invitationId],
+    );
+
+    if (inv.invitee_user_id) {
+      this.realtimeEvents.emitToUser(inv.invitee_user_id, 'invitation.updated', { invitation_id: invitationId, status: 'declined' });
+    }
+  }
+
+  async updateInvitationRole(invitationId: number, userId: number, roleName: string) {
+    const { rows: invRows } = await this.db.query(
+      `SELECT * FROM invitations WHERE invitation_id = $1`,
+      [invitationId],
+    );
+    if (invRows.length === 0) throw new NotFoundException('Invitation not found');
+    const inv = invRows[0];
+    if (inv.status !== 'pending') throw new BadRequestException('Invitation is not pending');
+
+    await this.projectAccess.assertOwnerOrAdmin(inv.project_id, userId);
+
+    const normalizedRole = roleName.trim().toLowerCase();
+    const { rows: roleRows } = await this.db.query(
+      'SELECT role_id FROM roles WHERE role_name = $1', [normalizedRole]
+    );
+    if (roleRows.length === 0) throw new BadRequestException('Invalid role');
+
+    const { rows } = await this.db.query(
+      `UPDATE invitations SET role_id = $1, updated_at = NOW() WHERE invitation_id = $2 RETURNING *`,
+      [roleRows[0].role_id, invitationId],
+    );
+    return rows[0];
+  }
+
+  async declineInvitation(invitationId: number, userId: number) {
+    const { rows } = await this.db.query(
+      `SELECT * FROM invitations WHERE invitation_id = $1 AND status = 'pending'`,
+      [invitationId],
+    );
+    if (rows.length === 0) throw new NotFoundException('Invitation not found or already processed');
+    const inv = rows[0];
+
+    const userResult = await this.db.query('SELECT email FROM users WHERE user_id = $1', [userId]);
+    const userEmail = userResult.rows[0]?.email;
+
+    const isInvitee = inv.invitee_user_id === userId ||
+      (inv.invitee_user_id === null && inv.invitee_email.toLowerCase() === userEmail?.toLowerCase());
+
+    if (!isInvitee) throw new BadRequestException('You are not the invitee');
+
+    await this.db.query(
+      `UPDATE invitations SET status = 'declined', updated_at = NOW() WHERE invitation_id = $1`,
+      [invitationId],
+    );
+
+    await this.notificationsService.createNotification({
+      userId: inv.inviter_user_id,
+      type: 'invitation_declined',
+      title: 'Invitation declined',
+      body: `${userEmail} declined your invitation`,
+      entityType: 'invitation',
+      entityId: invitationId,
+      metadata: { project_id: inv.project_id },
+    });
+
+    this.realtimeEvents.emitToUser(inv.inviter_user_id, 'invitation.updated', { invitation_id: invitationId, status: 'declined' });
+  }
+
   async acceptByToken(token: string, userId: number) {
     const { rows } = await this.db.query(
       `SELECT invitation_id FROM invitations WHERE token = $1 AND status = 'pending'`,
@@ -259,7 +341,7 @@ export class InvitationsService {
          FROM invitations i
          LEFT JOIN users u ON u.user_id = i.invitee_user_id
          WHERE i.invitation_id = $1
-         FOR UPDATE`,
+         FOR UPDATE OF i`,
         [invitationId],
       );
 

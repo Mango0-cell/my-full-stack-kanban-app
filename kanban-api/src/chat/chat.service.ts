@@ -119,24 +119,55 @@ export class ChatService {
       [conversationId],
     );
 
-    const message = rows[0];
+    // Enrich message with sender info for socket consumers
+    const senderResult = await this.db.query(
+      'SELECT display_name, avatar_url FROM users WHERE user_id = $1',
+      [input.senderUserId],
+    );
+    const message = {
+      ...rows[0],
+      sender_display_name: senderResult.rows[0]?.display_name ?? null,
+      sender_avatar_url: senderResult.rows[0]?.avatar_url ?? null,
+    };
+
+    // Emit to conversation room (for users with the chat page open)
     this.realtimeEvents.emitToConversation(conversationId, 'chat.message.received', message);
+    // Also emit to recipient's user room (so they get it even if not on the chat page)
+    this.realtimeEvents.emitToUser(recipientUserId, 'chat.message.received', message);
+    // Emit to sender's user room
     this.realtimeEvents.emitToUser(input.senderUserId, 'chat.message.sent', message);
 
-    await this.notificationsService.createNotification({
-      userId: recipientUserId,
-      type: 'chat_message',
-      title: 'New direct message',
-      body: content.length > 80 ? `${content.slice(0, 77)}...` : content,
-      entityType: 'conversation',
-      entityId: conversationId,
-      metadata: {
-        conversation_id: conversationId,
-        sender_user_id: input.senderUserId,
-      },
-    });
+    // Mute notification if recipient is currently viewing this conversation
+    const convRoom = this.realtimeEvents.conversationRoom(conversationId);
+    const recipientViewingChat = await this.realtimeEvents.isUserInRoom(
+      convRoom,
+      recipientUserId,
+    );
+    if (!recipientViewingChat) {
+      await this.notificationsService.createNotification({
+        userId: recipientUserId,
+        type: 'chat_message',
+        title: 'New direct message',
+        body: content.length > 80 ? `${content.slice(0, 77)}...` : content,
+        entityType: 'conversation',
+        entityId: conversationId,
+        metadata: {
+          conversation_id: conversationId,
+          sender_user_id: input.senderUserId,
+        },
+      });
+    }
 
     return message;
+  }
+
+  async deleteConversation(conversationId: number, userId: number) {
+    await this.assertConversationMember(conversationId, userId);
+    await this.db.query('DELETE FROM direct_conversations WHERE conversation_id = $1', [conversationId]);
+  }
+
+  async findOrCreatePublic(senderUserId: number, recipientUserId: number) {
+    return this.findOrCreateConversation(senderUserId, recipientUserId);
   }
 
   private async findOrCreateConversation(senderUserId: number, recipientUserId: number) {

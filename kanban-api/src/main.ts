@@ -14,16 +14,27 @@ async function bootstrap() {
   const port = config.get<number>('PORT', 3001);
   const nodeEnv = config.get<string>('NODE_ENV', 'development');
 
-  app.use(helmet());
-  app.use(morgan(nodeEnv === 'production' ? 'combined' : 'dev'));
+  // CORS — strict allowlist, NOT origin: true
+  const allowedOrigins = (config.get<string>('CORS_ORIGINS') || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (nodeEnv === 'development') {
+    allowedOrigins.push('http://localhost:3000', 'http://localhost:3001');
+  }
 
   app.enableCors({
-    origin:
-      nodeEnv === 'production'
-        ? true
-        : ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:4200'],
+    origin: allowedOrigins,
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
   });
+
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: false,
+  }));
+  app.use(morgan(nodeEnv === 'production' ? 'combined' : 'dev'));
 
   app.setGlobalPrefix('api');
   app.useGlobalFilters(new AllExceptionsFilter());
@@ -37,7 +48,19 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(port);
+  // Validate required env vars for production
+  const jwtSecret = config.get<string>('JWT_SECRET');
+  if (!jwtSecret) {
+    console.error('FATAL: JWT_SECRET environment variable is not set');
+    process.exit(1);
+  }
+  const dbUrl = config.get<string>('DATABASE_URL');
+  if (!dbUrl) {
+    console.error('FATAL: DATABASE_URL environment variable is not set');
+    process.exit(1);
+  }
+
+  await app.listen(port, '0.0.0.0');
   console.log(`Kanban API running on port ${port} [${nodeEnv}]`);
 }
 bootstrap();

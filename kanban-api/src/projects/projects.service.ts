@@ -7,12 +7,14 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { RolePolicyService } from '../common/policies/role-policy.service';
+import { RealtimeEventsService } from '../realtime/realtime-events.service';
 
 @Injectable()
 export class ProjectsService {
   constructor(
     private db: DatabaseService,
     private readonly rolePolicy: RolePolicyService,
+    private readonly realtimeEvents: RealtimeEventsService,
   ) {}
 
   private async getRoleByName(roleName: string) {
@@ -224,8 +226,9 @@ export class ProjectsService {
     const targetMember = await this.getMemberRole(projectId, targetUserId);
     const roleResult = await this.getRoleByName(roleName);
 
-    if (targetUserId === requesterId && requesterIsProjectAuthor) {
-      throw new ForbiddenException('Project owner cannot change own project role');
+    // Prevent any user from changing their own role
+    if (targetUserId === requesterId) {
+      throw new ForbiddenException('Cannot change your own role');
     }
     if (!requesterIsProjectAuthor) {
       if (this.rolePolicy.isPrivilegedRole(targetMember.role_name)) {
@@ -242,7 +245,37 @@ export class ProjectsService {
       [roleResult.role_id, projectId, targetUserId],
     );
     if (rows.length === 0) throw new NotFoundException('Member not found');
+    this.realtimeEvents.emitToProject(projectId, 'member.role.changed', {
+      project_id: projectId,
+      user_id: targetUserId,
+      new_role: roleResult.role_name,
+    });
+    this.realtimeEvents.emitToUser(targetUserId, 'member.role.changed', {
+      project_id: projectId,
+      user_id: targetUserId,
+      new_role: roleResult.role_name,
+    });
     return rows[0];
+  }
+
+  async leaveProject(projectId: number, userId: number) {
+    const { rows: projectRows } = await this.db.query(
+      'SELECT owner_user_id FROM projects WHERE project_id = $1',
+      [projectId],
+    );
+    if (projectRows.length === 0) throw new NotFoundException('Project not found');
+    if (projectRows[0].owner_user_id === userId) {
+      throw new ForbiddenException('Project owner cannot leave their own project');
+    }
+    const { rows } = await this.db.query(
+      'DELETE FROM project_members WHERE project_id = $1 AND user_id = $2 RETURNING *',
+      [projectId, userId],
+    );
+    if (rows.length === 0) throw new NotFoundException('Not a member of this project');
+    this.realtimeEvents.emitToProject(projectId, 'member.left', {
+      project_id: projectId,
+      user_id: userId,
+    });
   }
 
   async removeMember(projectId: number, requesterId: number, targetUserId: number) {
@@ -264,5 +297,9 @@ export class ProjectsService {
       [projectId, targetUserId],
     );
     if (rows.length === 0) throw new NotFoundException('Member not found');
+    this.realtimeEvents.emitToProject(projectId, 'member.removed', {
+      project_id: projectId,
+      user_id: targetUserId,
+    });
   }
 }

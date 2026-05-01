@@ -1,7 +1,8 @@
-import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put } from '@nestjs/common';
 import { CurrentUser, JwtPayload } from '../common/decorators/current-user.decorator';
 import { InvitationsService } from './invitations.service';
 import { CreateInvitationDto } from './dto/create-invitation.dto';
+import { UpdateInvitationRoleDto } from './dto/update-invitation-role.dto';
 
 @Controller('invitations')
 export class InvitationsController {
@@ -32,6 +33,28 @@ export class InvitationsController {
   async listPending(@CurrentUser() user: JwtPayload) {
     const invitations = await this.invitationsService.listPendingInvitations(user.userId);
     return { data: invitations, message: 'OK', error: null };
+  }
+
+  @Delete(':id')
+  async cancel(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    await this.invitationsService.cancelInvitation(id, user.userId);
+    return { data: null, message: 'Invitation cancelled', error: null };
+  }
+
+  @Put(':id')
+  async updateRole(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdateInvitationRoleDto,
+  ) {
+    const invitation = await this.invitationsService.updateInvitationRole(id, user.userId, body.role_name);
+    return { data: invitation, message: 'Invitation role updated', error: null };
+  }
+
+  @Post(':id/decline')
+  async decline(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    await this.invitationsService.declineInvitation(id, user.userId);
+    return { data: null, message: 'Invitation declined', error: null };
   }
 
   @Post('accept-by-token')

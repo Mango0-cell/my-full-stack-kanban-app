@@ -13,6 +13,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger('ExceptionFilter');
 
   catch(exception: unknown, host: ArgumentsHost) {
+    // Skip WebSocket contexts — they don't have HTTP request/response
+    if (host.getType() === 'ws') {
+      const err = exception instanceof Error ? exception : new Error(String(exception));
+      this.logger.error(`WS error: ${err.message}`);
+      return;
+    }
+
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();

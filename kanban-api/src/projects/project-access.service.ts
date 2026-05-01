@@ -29,7 +29,7 @@ export class ProjectAccessService {
     return member;
   }
 
-  private readonly editBoardRoles = new Set(['owner', 'admin', 'editor']);
+  private readonly editBoardRoles = new Set(['owner', 'admin', 'editor', 'member']);
 
   async assertCanEditBoard(projectId: number, userId: number) {
     const member = await this.assertMember(projectId, userId);

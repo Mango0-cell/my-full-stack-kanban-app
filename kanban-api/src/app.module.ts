@@ -18,6 +18,7 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { ChatModule } from './chat/chat.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { InvitationsModule } from './invitations/invitations.module';
+import { CanceledModule } from './canceled/canceled.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { InvitationsModule } from './invitations/invitations.module';
     NotificationsModule,
     ChatModule,
     InvitationsModule,
+    CanceledModule,
     RolePolicyModule,
   ],
   controllers: [HealthController],
