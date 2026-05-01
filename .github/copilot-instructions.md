@@ -2,157 +2,128 @@
 
 ## Current project phase (priority)
 
-This project is now in the **Realtime Collaboration + Chat phase**. Prioritize:
+This repository is in the **Realtime Collaboration + Chat** phase. Prioritize:
 
-1. Socket.IO-based realtime collaboration and chat.
-2. Notifications + invitations UX improvements.
-3. Role/permission hardening and account/project data isolation.
-4. SOLID-oriented API refactor where needed to support websocket + HTTP parity.
+1. Socket.IO-driven realtime board/chat behavior.
+2. Notifications + invitations UX.
+3. Permission hardening and account/project data isolation.
+4. Backend refactors that keep HTTP + websocket authorization behavior aligned.
 
 ## Build, test, and lint commands
 
-From repository root:
+Run from repository root:
 
 ```bash
-# Run API + frontend in parallel
+# API + frontend together
 npm run dev
 
-# Frontend only
+# Frontend
 npm run dev --prefix kanban-frontend
 npm run build --prefix kanban-frontend
 npm run lint --prefix kanban-frontend
 npm run start --prefix kanban-frontend
 
-# API only
+# API
 npm run dev --prefix kanban-api
 npm run build --prefix kanban-api
+npm run lint --prefix kanban-api
 npm run start --prefix kanban-api
 ```
 
 Testing status:
 
-- There is currently **no working automated test suite configured** in package scripts.
-- `kanban-api` has a placeholder `npm test` script that exits with an error.
-- There is currently no “run a single test” command available in this repo.
-
-## MCP servers to prioritize
-
-- **Playwright MCP (recommended):** use it for end-to-end UI verification of auth redirects, board drag-and-drop flows, modal flows, and `/api/*` network behavior through the Next.js rewrite.
-- **PostgreSQL MCP (if available):** use it to inspect migration effects, verify role/member/card data relationships, and validate SQL-backed behavior in `kanban-api` services.
+- There is **no working automated test suite** in package scripts right now.
+- `npm test --prefix kanban-api` is a placeholder script that exits with error.
+- There is no configured single-test command in this repository yet.
 
 ## High-level architecture
 
-This repository is a two-app setup:
+This is a two-app monorepo:
 
-1. **`kanban-frontend`**: Next.js App Router UI (React 19), Redux Toolkit + RTK Query for API state.
-2. **`kanban-api`**: NestJS REST API using raw SQL via `pg` (`DatabaseService`) against PostgreSQL.
+1. **`kanban-frontend`**: Next.js App Router (React 19), Redux Toolkit + RTK Query.
+2. **`kanban-api`**: NestJS API using raw PostgreSQL queries (`pg`) through `DatabaseService`.
 
-Realtime architecture target for this phase:
+Request/auth flow:
 
-1. Keep REST for CRUD and initial data hydration.
-2. Add Socket.IO channel(s) for live board updates, chat messages, and notifications.
-3. Keep auth/permission parity across HTTP controllers and websocket handlers.
+1. Frontend API slices call `NEXT_PUBLIC_API_URL` (configured as `/api` in frontend env files).
+2. Next rewrite (`kanban-frontend/next.config.ts`) forwards `/api/*` to `${BACKEND_URL}/api/*`.
+3. API serves under global `/api` prefix (`kanban-api/src/main.ts`).
+4. JWT is stored in `kanban_token` cookie, injected into RTK Query `Authorization` headers, and checked by a global `JwtAuthGuard`.
+5. Route gating for pages is done in `kanban-frontend/src/proxy.ts` using the same cookie.
 
-Request flow:
+Realtime flow:
 
-1. Frontend calls `/api/*` paths.
-2. Next.js rewrite (`kanban-frontend/next.config.ts`) proxies those to `${BACKEND_URL}/api/*` (default `http://localhost:3001`).
-3. NestJS serves routes under global `/api` prefix (`kanban-api/src/main.ts`).
+1. Socket namespace is `/realtime` (frontend socket client in `src/lib/realtime/socket.ts`).
+2. Users join:
+   - personal rooms (`user:{id}`) on connect,
+   - project rooms (`project:{id}`) on board pages,
+   - conversation rooms (`conversation:{id}`) only while chat pages are open.
+3. Backend services persist to Postgres first, then emit realtime events via `RealtimeEventsService`.
+4. `ChatService` suppresses notification creation when recipient is already active in the conversation room.
 
-Auth flow:
+Data model:
 
-1. Login/register returns JWT from API.
-2. Frontend stores token in `kanban_token` cookie (`js-cookie`).
-3. RTK Query base API injects `Authorization: Bearer <token>` from that cookie.
-4. Next middleware/proxy (`kanban-frontend/src/proxy.ts`) guards non-public pages by presence of the cookie.
-5. API enforces auth globally with `JwtAuthGuard` (registered as `APP_GUARD`), and public endpoints opt out via `@Public()`.
-
-Data model and permissions:
-
-- Core entities: users, projects, project_members, columns, cards, comments, attachments, card_activity.
-- Membership and role checks are enforced in service layer methods (owner/admin/member checks before writes).
-- Database schema and role seed live in SQL migrations under `kanban-api/db/migrations`.
+- Base schema: users, projects, project_members, columns, cards, comments, attachments, card_activity.
+- Realtime/chat schema extensions (migrations): direct_conversations, direct_messages, invitations, notifications.
+- SQL migrations live in `kanban-api/db/migrations`.
 
 ## Key conventions in this codebase
 
-### API response envelope is standardized
+### API contract and errors
 
-All endpoints return:
+- Controllers return the envelope:
+  `{ data, message, error }`.
+- Failures are normalized by `AllExceptionsFilter` to:
+  `{ data: null, message, error: { code, message } }`.
+- Frontend types (`src/lib/types/api.ts`) and RTK Query endpoints assume this envelope.
 
-```json
-{ "data": ..., "message": "...", "error": null | { "code": "...", "message": "..." } }
-```
+### Backend data/access patterns
 
-Use this same shape for new endpoints. Error code mapping is centralized in the global exception filter.
+- No ORM: use `DatabaseService.query(...)` for SQL.
+- Multi-step mutations use explicit transactions (`getClient()`, `BEGIN/COMMIT/ROLLBACK`, `release()`).
+- Keep authorization checks in shared policy/access services (`RolePolicyService`, `ProjectAccessService`) and reuse them across modules.
 
-### API modules use raw SQL, not an ORM
+### API auth/decorator pattern
 
-- Services call `DatabaseService.query(...)` directly.
-- Multi-step writes use explicit transactions with `getClient()`, `BEGIN/COMMIT/ROLLBACK`, and `client.release()` in `finally`.
-- DTOs + Nest validation pipes are relied on for input validation.
+- `JwtAuthGuard` is global (registered via `APP_GUARD` in `AuthModule`), so endpoints are private by default.
+- Public endpoints must opt out explicitly with `@Public()`.
+- Controllers should consume authenticated identity via `@CurrentUser()` (`JwtPayload`) instead of re-parsing request internals.
 
-### SOLID-first backend evolution (required in this phase)
+### Frontend server-state pattern
 
-- Separate transport concerns (REST controllers / Socket gateways) from business logic services.
-- Centralize role rules in shared policy methods used by both HTTP and socket events.
-- Keep invitation, notification, chat, and membership logic in distinct services/modules.
-- Favor extension (new events/features) over modifying unrelated modules.
+- Use RTK Query endpoint slices in `src/lib/store/api/*Api.ts`.
+- Keep `providesTags` / `invalidatesTags` accurate when changing endpoints.
+- Do not bypass this layer with ad-hoc `fetch()` in app code.
 
-### Frontend API layer is RTK Query-first
+### Realtime event and room conventions
 
-- Add/modify endpoints in `src/lib/store/api/*Api.ts` files via `baseApi.injectEndpoints`.
-- Keep cache behavior correct with `providesTags` / `invalidatesTags`.
-- Use generated hooks (`useXxxQuery`, `useXxxMutation`) in components; do not bypass the API layer for server-backed state.
+- Socket handlers authenticate at connection time, then protect `@SubscribeMessage` handlers with `WsAuthGuard`.
+- Room lifecycle events are contractually named:
+  - `room.project.join`
+  - `room.conversation.join`
+  - `room.conversation.leave`
+- Domain event names use scoped prefixes (for example `board.card.*`, `board.column.*`, `member.*`, `chat.message.*`, `notification.*`, `invitation.*`).
 
-For realtime additions:
+### Session/account isolation
 
-- Add a dedicated socket client layer; do not scatter socket logic across unrelated components.
-- Use RTK Query or store actions to reconcile incoming websocket events with cached REST data.
+- Clear account-scoped client state on auth transitions (login/register/logout): auth slice, RTK Query cache, realtime socket, and localStorage session keys.
+- Scope localStorage keys by user (and project/conversation where relevant), e.g.:
+  - `kanban_archived_projects:{userId}`
+  - `kanban_canceled_cards:{userId}:{projectId}`
+  - `chat-cache:{userId}:{conversationId}`
 
-### Route protection depends on cookie semantics
+### Realtime/chat cache contract
 
-- Public pages are `/`, `/login`, `/register`.
-- Protected dashboard routes rely on `kanban_token` cookie checks in `src/proxy.ts`.
-- Avoid changes that break this contract unless updating both middleware/proxy and auth handling together.
+- Chat local cache is capped to 40 messages and expires after 3 days (`src/lib/realtime/chatCache.ts`).
+- Conversation pages show countdown to cache reset and merge API messages with live socket messages.
 
-### Account/project isolation is mandatory
+### Product-rule conventions enforced in code
 
-- Any localStorage caches (archived/canceled/chat drafts/messages) must be scoped by user and project.
-- Login/logout/register flows must clear or reinitialize account-bound UI state immediately.
-- Never reuse previous-account cached state in the current session.
+- Gmail-only rule is enforced for registration and invitations (`@gmail.com`) in both frontend validation and backend DTO/service checks.
+- Notification list limits are constrained to 5 or 10 only (frontend query type + backend DTO/service).
+- Invitation emails use an accept link based on `INVITATION_LANDING_URL` (defaulting to the deployed app URL) and `POST /invitations/accept-by-token` supports token acceptance.
+- Owner cannot leave/remove self; non-owner privileged role changes are blocked in project member role logic.
 
-### Realtime/chat data policy for localStorage
+### Framework caution from assistant config
 
-- Use a fixed-size queue (circular-buffer behavior) for recent messages.
-- Keep a maximum length (e.g., 40); trim oldest entries when capacity is exceeded.
-- Persist timestamp metadata and clear chat cache older than 3 days.
-- Expose a UI countdown showing time until local cache reset.
-
-### Role rules (target behavior)
-
-- **admin**: full CRUD in own project, including collaborators.
-- **editor**: CRUD for board content only.
-- **viewer**: read-only.
-- Project author cannot remove self from project.
-- Non-author members cannot elevate/change privileged roles across foreign-owned projects.
-
-### Feature priorities for this phase
-
-1. Team members page: horizontal project selector + member list per selected project.
-2. Team settings invitations:
-   - external invitation button with Gmail-only validation (`@gmail.com`),
-   - signup email validation aligned to same Gmail rule,
-   - invitation email “Accept invitation” link to `https://kanban-app-full-stack.vercel.app`,
-   - internal “Add member” dropdown search by email.
-3. Header:
-   - notifications dropdown (latest 5 + “see more” latest 10),
-   - dedicated messages icon linking to chat list,
-   - users dropdown search by email with icon actions: follow label, send message, view profile.
-4. Canceled view:
-   - scope to one project/account,
-   - support unarchive/delete for columns and delete for cards.
-5. View transitions between app views for smoother UX.
-
-### Next.js version caution (from existing assistant rules)
-
-`kanban-frontend/CLAUDE.md` notes this project uses a Next.js version with breaking changes; check `node_modules/next/dist/docs/` and current deprecation guidance before framework-level refactors.
+- `kanban-frontend/CLAUDE.md` flags this Next.js version as having breaking changes; check current Next docs before framework-level refactors.
