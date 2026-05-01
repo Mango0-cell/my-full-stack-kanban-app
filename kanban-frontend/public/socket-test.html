@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head><title>Socket Test</title></head>
+<body>
+<h1>Socket.IO Test</h1>
+<pre id="log"></pre>
+<script>
+function log(msg) {
+  document.getElementById('log').textContent += new Date().toISOString().substr(11,12) + ' ' + msg + '\n';
+  console.warn('[test] ' + msg);
+}
+
+// Step 1: Test raw XHR to Socket.IO endpoint
+log('Testing XHR to http://localhost:3001/socket.io/?EIO=4&transport=polling');
+fetch('http://localhost:3001/socket.io/?EIO=4&transport=polling', {
+  credentials: 'include'
+}).then(r => {
+  log('Fetch status: ' + r.status);
+  return r.text();
+}).then(t => {
+  log('Fetch body: ' + t.substring(0, 100));
+}).catch(e => {
+  log('Fetch ERROR: ' + e.message);
+});
+
+// Step 2: Load socket.io-client from CDN and test
+const script = document.createElement('script');
+script.src = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
+script.onload = function() {
+  log('socket.io-client loaded from CDN');
+
+  // Read token from cookie
+  const cookies = document.cookie.split(';').reduce((acc, c) => {
+    const [k, v] = c.trim().split('=');
+    acc[k] = v;
+    return acc;
+  }, {});
+  const token = cookies['kanban_token'];
+  log('Token present: ' + !!token);
+
+  const socket = io('http://localhost:3001/realtime', {
+    transports: ['polling'],
+    upgrade: false,
+    withCredentials: true,
+    auth: { token: token || 'no-token' }
+  });
+
+  socket.on('connect', () => log('CONNECTED! id=' + socket.id));
+  socket.on('connect_error', (e) => log('connect_error: ' + e.message));
+  socket.on('disconnect', (r) => log('disconnect: ' + r));
+  socket.on('auth_error', (d) => log('auth_error: ' + JSON.stringify(d)));
+
+  socket.io.engine && socket.io.engine.on('error', (e) => log('engine error: ' + e.message));
+};
+document.head.appendChild(script);
+</script>
+</body>
+</html>

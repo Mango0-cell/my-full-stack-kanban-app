@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
+import { useRouter } from 'next/navigation';
 import { Search, UserPlus, Send, ShieldAlert, Trash2, Sparkles, Check, Info, FolderKanban, Calendar } from 'lucide-react';
 import { useGetMeQuery } from '@/lib/store/api/authApi';
 import { getRealtimeSocket, connectRealtime } from '@/lib/realtime/socket';
@@ -15,9 +16,10 @@ import {
   useListProjectsQuery,
   useRemoveMemberMutation,
   useUpdateMemberRoleMutation,
+  useLeaveProjectMutation,
 } from '@/lib/store/api/projectsApi';
 import { useSearchUsersQuery } from '@/lib/store/api/usersApi';
-import { useSendInviteMutation } from '@/lib/store/api/inviteApi';
+import { useSendInviteMutation, useCancelInvitationMutation, useUpdateInvitationRoleMutation } from '@/lib/store/api/inviteApi';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const externalInviteSchema = z.object({
@@ -27,10 +29,27 @@ const externalInviteSchema = z.object({
 
 type ExternalInviteForm = z.infer<typeof externalInviteSchema>;
 const PricingSection = dynamic(() => import('@/components/ui/pricing-section'), { ssr: false });
+const PUBLIC_INVITATION_URL = 'https://kanban-app-full-stack.vercel.app';
 
 type InviteRole = 'admin' | 'editor' | 'viewer';
 
+function ActionButton({ onClick, variant, children }: { onClick: () => void; variant: 'secondary' | 'primary'; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className="px-3 py-2 rounded-lg text-xs font-medium uppercase tracking-widest cursor-pointer transition-colors duration-200"
+      style={variant === 'primary'
+        ? { backgroundColor: 'var(--color-brand-500)', color: '#fff' }
+        : { backgroundColor: 'var(--color-surface-3)', color: 'var(--color-text-primary)' }
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function MembersPage() {
+  const router = useRouter();
   const { data: meData } = useGetMeQuery();
   const me = meData?.data;
   const { data: projectsData } = useListProjectsQuery();
@@ -68,6 +87,9 @@ export default function MembersPage() {
   const [sendInvite, { isLoading: isSendingInvite }] = useSendInviteMutation();
   const [updateMemberRole] = useUpdateMemberRoleMutation();
   const [removeMember] = useRemoveMemberMutation();
+  const [leaveProjectMut] = useLeaveProjectMutation();
+  const [cancelInvitation] = useCancelInvitationMutation();
+  const [updateInvitationRole] = useUpdateInvitationRoleMutation();
 
   const myMember = useMemo(
     () => members.find((m) => m.user_id === me?.user_id && m.membership_status === 'joined'),
@@ -100,13 +122,20 @@ export default function MembersPage() {
     const onInvitationUpdated = () => {
       refetchMembers();
     };
+    const onMemberEvent = () => refetchMembers();
     socket.on('invitation.accepted', onInvitationAccepted);
     socket.on('invitation.received', onInvitationReceived);
     socket.on('invitation.updated', onInvitationUpdated);
+    socket.on('member.role.changed', onMemberEvent);
+    socket.on('member.removed', onMemberEvent);
+    socket.on('member.left', onMemberEvent);
     return () => {
       socket.off('invitation.accepted', onInvitationAccepted);
       socket.off('invitation.received', onInvitationReceived);
       socket.off('invitation.updated', onInvitationUpdated);
+      socket.off('member.role.changed', onMemberEvent);
+      socket.off('member.removed', onMemberEvent);
+      socket.off('member.left', onMemberEvent);
     };
   }, [refetchMembers, refetchNotifications]);
 
@@ -131,15 +160,35 @@ export default function MembersPage() {
       toast.error('Please select a project');
       return;
     }
+    const email = values.email.trim().toLowerCase();
     const message = values.message?.trim();
     try {
       await sendInvite({
         project_id: activeProjectId,
-        email: values.email.trim().toLowerCase(),
+        email,
         role_name: externalInviteRole,
         ...(message ? { message } : {}),
       }).unwrap();
-      toast.success('External invitation sent');
+
+      // Open user's email client with pre-filled invitation
+      const projectName = activeProject?.project_name ?? 'a project';
+      const senderName = me?.display_name ?? me?.email ?? 'A teammate';
+      const subject = encodeURIComponent(`${senderName} invited you to ${projectName} on Kanban Flow`);
+      const bodyLines = [
+        `Hi!`,
+        ``,
+        `${senderName} has invited you to collaborate on "${projectName}" in Kanban Flow.`,
+        ...(message ? [``, `"${message}"`] : []),
+        ``,
+        `Open Kanban Flow here:`,
+        PUBLIC_INVITATION_URL,
+        ``,
+        `— Kanban Flow`,
+      ];
+      const body = encodeURIComponent(bodyLines.join('\n'));
+      window.open(`mailto:${email}?subject=${subject}&body=${body}`, '_blank');
+
+      toast.success('Invitation created — email client opened');
       form.reset();
       setExternalInviteRole('viewer');
       setExternalInviteOpen(false);
@@ -194,6 +243,17 @@ export default function MembersPage() {
     }
   }
 
+  async function handleLeaveProject() {
+    if (!activeProjectId) return;
+    try {
+      await leaveProjectMut(activeProjectId).unwrap();
+      toast.success('You left the project');
+      router.push('/board');
+    } catch {
+      toast.error('Unable to leave project');
+    }
+  }
+
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-10">
       <h1 className="text-3xl font-semibold tracking-tight mb-2" style={{ color: 'var(--color-text-primary)' }}>
@@ -233,20 +293,12 @@ export default function MembersPage() {
             </h2>
             {isAdminOrOwner && (
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setExternalInviteOpen(true)}
-                  className="px-3 py-2 rounded-lg text-xs font-medium uppercase tracking-widest cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-4)]"
-                  style={{ backgroundColor: 'var(--color-surface-3)', color: 'var(--color-text-primary)' }}
-                >
+                <ActionButton onClick={() => setExternalInviteOpen(true)} variant="secondary">
                   Invite external member
-                </button>
-                <button
-                  onClick={() => setInternalInviteOpen(true)}
-                  className="px-3 py-2 rounded-lg text-xs font-medium uppercase tracking-widest cursor-pointer transition-colors duration-200 hover:opacity-90"
-                  style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
-                >
+                </ActionButton>
+                <ActionButton onClick={() => setInternalInviteOpen(true)} variant="primary">
                   Add member
-                </button>
+                </ActionButton>
               </div>
             )}
           </div>
@@ -299,11 +351,28 @@ export default function MembersPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     {/* Role display / selector */}
-                    {isJoined && isAdminOrOwner ? (
+                    {isJoined && isAdminOrOwner && !isOwnerRow && !isMe
+                      && (myRole === 'owner' || !['admin', 'owner'].includes(member.role_name)) ? (
                       <select
                         value={member.role_name}
                         onChange={(e) => handleRoleChange(member.user_id, e.target.value as 'admin' | 'editor' | 'viewer')}
-                        disabled={isOwnerRow}
+                        className="h-8 rounded-md px-2 text-xs cursor-pointer"
+                        style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-primary)' }}
+                      >
+                        <option value="admin">admin</option>
+                        <option value="editor">editor</option>
+                        <option value="viewer">viewer</option>
+                      </select>
+                    ) : isPending && isAdminOrOwner && member.invitation_id ? (
+                      <select
+                        value={member.role_name}
+                        onChange={async (e) => {
+                          try {
+                            await updateInvitationRole({ id: member.invitation_id!, role_name: e.target.value }).unwrap();
+                            toast.success('Invitation role updated');
+                            refetchMembers();
+                          } catch { toast.error('Failed to update role'); }
+                        }}
                         className="h-8 rounded-md px-2 text-xs cursor-pointer"
                         style={{ backgroundColor: 'var(--color-surface-4)', color: 'var(--color-text-primary)' }}
                       >
@@ -321,7 +390,7 @@ export default function MembersPage() {
                     )}
 
                     {/* Remove / Leave button */}
-                    {isJoined && isAdminOrOwner && !isOwnerRow ? (
+                    {isJoined && isAdminOrOwner && !isOwnerRow && !isMe ? (
                       <button
                         onClick={() => handleRemoveMember(member.user_id)}
                         className="p-2 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)]"
@@ -331,7 +400,7 @@ export default function MembersPage() {
                       </button>
                     ) : isJoined && isMe && !isOwnerRow ? (
                       <button
-                        onClick={() => handleRemoveMember(member.user_id)}
+                        onClick={handleLeaveProject}
                         className="p-2 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)] text-xs"
                         style={{ color: '#f87171' }}
                       >
@@ -341,6 +410,20 @@ export default function MembersPage() {
                       <button
                         disabled
                         className="p-2 rounded-md disabled:opacity-40 cursor-not-allowed"
+                        style={{ color: '#f87171' }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    ) : isPending && isAdminOrOwner && member.invitation_id ? (
+                      <button
+                        onClick={async () => {
+                          try {
+                            await cancelInvitation(member.invitation_id!).unwrap();
+                            toast.success('Invitation cancelled');
+                            refetchMembers();
+                          } catch { toast.error('Failed to cancel invitation'); }
+                        }}
+                        className="p-2 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)]"
                         style={{ color: '#f87171' }}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -563,6 +646,7 @@ export default function MembersPage() {
             border: '1px solid rgba(255,255,255,0.08)',
           }}
         >
+          <DialogTitle className="sr-only">Subscription Plans</DialogTitle>
           <PricingSection />
         </DialogContent>
       </Dialog>

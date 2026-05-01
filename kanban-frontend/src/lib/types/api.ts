@@ -135,6 +135,29 @@ export interface NotificationItem {
   created_at: string;
 }
 
+export interface CanceledCardSnapshot {
+  canceled_card_id: number;
+  title: string;
+  description?: string | null;
+  due_date?: string | null;
+  priority: string;
+  assigned_user_id?: number | null;
+  original_column_name: string;
+  canceled_at: string;
+}
+
+export interface CanceledColumnEntry {
+  canceled_group_id: number;
+  column_name: string;
+  canceled_at: string;
+  cards: CanceledCardSnapshot[];
+}
+
+export interface CanceledItemsResponse {
+  entries: CanceledColumnEntry[];
+  orphan_cards: CanceledCardSnapshot[];
+}
+
 export interface Invitation {
   invitation_id: number;
   project_id: number;

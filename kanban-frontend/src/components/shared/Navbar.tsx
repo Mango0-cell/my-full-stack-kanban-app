@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import Cookies from 'js-cookie';
 import {
   Bell,
@@ -29,15 +29,18 @@ import {
   useListNotificationsQuery,
   useMarkNotificationReadMutation,
 } from '@/lib/store/api/notificationsApi';
+import toast from 'react-hot-toast';
 import {
   useSearchUsersQuery,
 } from '@/lib/store/api/usersApi';
-import { useSendMessageMutation } from '@/lib/store/api/chatApi';
+import { useAcceptInviteMutation, useDeclineInviteMutation } from '@/lib/store/api/inviteApi';
+import { useFindOrCreateConversationMutation } from '@/lib/store/api/chatApi';
 import { connectRealtime, destroyRealtime } from '@/lib/realtime/socket';
 import { clearClientSessionState } from '@/lib/utils/sessionState';
 
 export function Navbar() {
   const router = useRouter();
+  const pathname = usePathname();
   const dispatch = useAppDispatch();
   const { data } = useGetMeQuery();
   const user = data?.data;
@@ -50,20 +53,28 @@ export function Navbar() {
   const { data: usersData } = useSearchUsersQuery(userSearch.trim(), {
     skip: userSearch.trim().length < 2,
   });
-  const [sendMessage, { isLoading: isMessageSending }] = useSendMessageMutation();
+  const [findOrCreate, { isLoading: isCreatingConvo }] = useFindOrCreateConversationMutation();
+  const [acceptInvite] = useAcceptInviteMutation();
+  const [declineInvite] = useDeclineInviteMutation();
 
   useEffect(() => {
     const token = Cookies.get('kanban_token');
     if (!token) return;
     const socket = connectRealtime();
     const onNotification = () => refetchNotifs();
+    const onChatMessage = () => {
+      // Don't refetch notifications when user is actively in a chat conversation —
+      // the backend already suppresses notification creation for active viewers
+      if (pathname.startsWith('/chats/')) return;
+      refetchNotifs();
+    };
     socket.on('notification.received', onNotification);
-    socket.on('chat.message.received', onNotification);
+    socket.on('chat.message.received', onChatMessage);
     return () => {
       socket.off('notification.received', onNotification);
-      socket.off('chat.message.received', onNotification);
+      socket.off('chat.message.received', onChatMessage);
     };
-  }, [refetchNotifs]);
+  }, [refetchNotifs, pathname]);
 
   function handleLogout() {
     Cookies.remove('kanban_token');
@@ -76,10 +87,7 @@ export function Navbar() {
 
   async function handleSendMessage(targetUserId: number) {
     try {
-      const response = await sendMessage({
-        recipient_user_id: targetUserId,
-        content: 'Hi! 👋',
-      }).unwrap();
+      const response = await findOrCreate({ recipient_user_id: targetUserId }).unwrap();
       router.push(`/chats/${response.data.conversation_id}`);
     } catch {
       router.push('/chats');
@@ -153,7 +161,7 @@ export function Navbar() {
                         className="p-1.5 rounded-md cursor-pointer transition-colors duration-200 hover:bg-[var(--color-surface-3)]"
                         title="Send message"
                         onClick={() => handleSendMessage(u.user_id)}
-                        disabled={isMessageSending}
+                        disabled={isCreatingConvo}
                         style={{ color: 'var(--color-text-primary)' }}
                       >
                         <Mail className="h-4 w-4" />
@@ -176,7 +184,7 @@ export function Navbar() {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="hidden sm:flex p-1.5 rounded-md transition-colors duration-200 relative cursor-pointer hover:bg-[var(--color-surface-3)]" style={{ color: 'var(--color-text-secondary)' }}>
+            <button className="flex p-1.5 rounded-md transition-colors duration-200 relative cursor-pointer hover:bg-[var(--color-surface-3)]" style={{ color: 'var(--color-text-secondary)' }}>
               <Bell className="h-4 w-4" />
               {unreadCount > 0 && (
                 <span className="absolute -top-1 -right-1 text-[10px] px-1 rounded-full bg-indigo-500 text-white">
@@ -212,18 +220,77 @@ export function Navbar() {
                   No notifications yet.
                 </p>
               ) : (
-                notifications.map((n) => (
-                  <DropdownMenuItem
-                    key={n.notification_id}
-                    onClick={() => markRead(n.notification_id)}
-                    className="cursor-pointer py-2"
-                  >
-                    <div className="w-full">
-                      <p className="text-sm" style={{ color: 'var(--color-text-primary)' }}>{n.title}</p>
-                      <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{n.body}</p>
+                notifications.map((n) => {
+                  const isInvitation = n.type === 'invitation_received' && !n.is_read;
+                  const isChatMessage = n.type === 'chat_message';
+                  const entityId = n.entity_id;
+
+                  return (
+                    <div
+                      key={n.notification_id}
+                      className={`px-2 py-2.5 rounded-md ${n.is_read ? 'opacity-60' : ''}`}
+                      style={{ backgroundColor: n.is_read ? 'transparent' : 'rgba(99,102,241,0.05)' }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div
+                          className={`flex-1 min-w-0 ${isChatMessage ? 'cursor-pointer' : ''}`}
+                          onClick={() => {
+                            if (isChatMessage && n.metadata?.conversation_id) {
+                              markRead(n.notification_id);
+                              router.push(`/chats/${n.metadata.conversation_id}`);
+                            } else if (!isInvitation) {
+                              markRead(n.notification_id);
+                            }
+                          }}
+                        >
+                          <p className="text-sm" style={{ color: 'var(--color-text-primary)' }}>{n.title}</p>
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>{n.body}</p>
+                        </div>
+                        {!n.is_read && !isInvitation && (
+                          <span className="w-2 h-2 rounded-full shrink-0 mt-1.5" style={{ backgroundColor: 'var(--color-brand-500)' }} />
+                        )}
+                      </div>
+                      {isInvitation && entityId && (
+                        <div className="flex items-center gap-2 mt-2">
+                          <button
+                            onClick={async () => {
+                              try {
+                                await acceptInvite(entityId).unwrap();
+                                markRead(n.notification_id);
+                                toast.success('Invitation accepted!');
+                                refetchNotifs();
+                              } catch (err: unknown) {
+                                const msg = (err as { data?: { message?: string } })?.data?.message || 'Failed to accept';
+                                toast.error(msg);
+                              }
+                            }}
+                            className="px-3 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors hover:opacity-90"
+                            style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
+                          >
+                            Accept
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await declineInvite(entityId).unwrap();
+                                markRead(n.notification_id);
+                                toast.success('Invitation declined');
+                                refetchNotifs();
+                              } catch (err: unknown) {
+                                const msg = (err as { data?: { message?: string } })?.data?.message || 'Failed to decline';
+                                toast.error(msg);
+                              }
+                            }}
+                            className="px-3 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors hover:bg-[var(--color-surface-3)]"
+                            style={{ color: 'var(--color-text-secondary)', border: '1px solid rgba(255,255,255,0.1)' }}
+                          >
+                            Decline
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  </DropdownMenuItem>
-                ))
+                  );
+                })
               )}
             </div>
           </DropdownMenuContent>

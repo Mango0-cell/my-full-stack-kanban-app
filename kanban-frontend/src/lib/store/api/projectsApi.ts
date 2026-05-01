@@ -39,6 +39,10 @@ export const projectsApi = baseApi.injectEndpoints({
       query: ({ projectId, userId }) => ({ url: `/projects/${projectId}/members/${userId}`, method: 'DELETE' }),
       invalidatesTags: (_result, _error, { projectId }) => [{ type: 'Member', id: projectId }],
     }),
+    leaveProject: builder.mutation<ApiResponse<null>, number>({
+      query: (projectId) => ({ url: `/projects/${projectId}/leave`, method: 'POST' }),
+      invalidatesTags: ['Project'],
+    }),
   }),
 });
 
@@ -52,4 +56,5 @@ export const {
   useAddMemberMutation,
   useUpdateMemberRoleMutation,
   useRemoveMemberMutation,
+  useLeaveProjectMutation,
 } = projectsApi;

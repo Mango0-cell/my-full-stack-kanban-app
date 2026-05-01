@@ -1,13 +1,15 @@
 'use client';
 
 import { use, useEffect, useRef, useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { useGetMeQuery } from '@/lib/store/api/authApi';
 import {
   useListMessagesQuery,
   useSendMessageMutation,
   useListConversationsQuery,
+  useDeleteConversationMutation,
 } from '@/lib/store/api/chatApi';
-import { connectRealtime } from '@/lib/realtime/socket';
+import { getRealtimeSocket, connectRealtime } from '@/lib/realtime/socket';
 import {
   appendChatCache,
   msUntilChatCacheReset,
@@ -17,6 +19,9 @@ import {
 import type { DirectMessage } from '@/lib/types/api';
 import { Search, MoreVertical, Smile, Paperclip, Send, Clock, CheckCheck, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
+import toast from 'react-hot-toast';
+
+const EMOJI_LIST = ['😀','😂','😍','🥰','😎','🤔','👍','👋','🎉','🔥','❤️','💯','✅','👀','🚀','💪','🙌','😅','🤝','⭐','💡','📌','🎯','✨','💬'];
 
 interface Props {
   params: Promise<{ conversationId: string }>;
@@ -150,35 +155,82 @@ export default function ConversationPage({ params }: Props) {
   const { data, refetch } = useListMessagesQuery(conversationId, {
     skip: !Number.isInteger(conversationId),
   });
+  const router = useRouter();
   const [sendMessage, { isLoading: isSending }] = useSendMessageMutation();
+  const [deleteConversation] = useDeleteConversationMutation();
   const [draft, setDraft] = useState('');
   const [liveMessages, setLiveMessages] = useState<DirectMessage[]>([]);
   const [resetCountdown, setResetCountdown] = useState(0);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const cachedMessages = me?.user_id ? readChatCache(me.user_id, conversationId) : [];
 
   /* ── socket ── */
   useEffect(() => {
     if (!me?.user_id || !conversationId) return;
-    const socket = connectRealtime();
-    socket.emit('room.conversation.join', { conversationId });
+
+    // 1. Get socket instance WITHOUT connecting yet
+    const socket = getRealtimeSocket();
+
+    const joinRoom = () => {
+      console.log('[socket] joining conversation room', conversationId, 'connected:', socket.connected, 'id:', socket.id);
+      socket.emit('room.conversation.join', { conversationId }, (response: { joined?: boolean; error?: string }) => {
+        if (response?.error) {
+          console.error('[socket] room join failed:', response.error);
+        } else {
+          console.log('[socket] room joined successfully:', response);
+        }
+      });
+    };
+
+    // 2. Register ALL listeners BEFORE connecting
+    const onConnect = () => {
+      console.log('[socket] connected, joining room');
+      joinRoom();
+    };
 
     const onIncoming = (message: DirectMessage) => {
       if (message.conversation_id !== conversationId) return;
       appendChatCache(me.user_id, conversationId, message);
       setLiveMessages((prev) => {
-        const next = prev.filter((m) => m.message_id !== message.message_id);
-        next.push(message);
-        return next.slice(-40);
+        const exists = prev.some((m) => m.message_id === message.message_id);
+        if (exists) return prev;
+        return [...prev, message].slice(-40);
       });
-      refetch();
     };
 
+    const onError = (err: Error) => console.error('[socket] connect_error:', err.message);
+    const onDisconnect = (reason: string) => console.log('[socket] disconnected:', reason);
+
+    socket.on('connect', onConnect);
     socket.on('chat.message.received', onIncoming);
+    socket.on('chat.message.sent', onIncoming);
+    socket.on('connect_error', onError);
+    socket.on('disconnect', onDisconnect);
+
+    // 3. NOW connect (or if already connected, join room immediately)
+    if (socket.connected) {
+      joinRoom();
+    } else {
+      connectRealtime();
+    }
+
     return () => {
+      socket.off('connect', onConnect);
       socket.off('chat.message.received', onIncoming);
+      socket.off('chat.message.sent', onIncoming);
+      socket.off('connect_error', onError);
+      socket.off('disconnect', onDisconnect);
+      // Leave conversation room so isUserInRoom returns false
+      // and backend resumes creating notifications
+      socket.emit('room.conversation.leave', { conversationId });
     };
-  }, [conversationId, me?.user_id, refetch]);
+  }, [conversationId, me?.user_id]);
 
   /* ── cache countdown ── */
   useEffect(() => {
@@ -194,19 +246,30 @@ export default function ConversationPage({ params }: Props) {
     };
   }, [conversationId, me?.user_id]);
 
+  /* ── search debounce ── */
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      setDebouncedSearch(searchQuery.toLowerCase());
+    }, 400);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [searchQuery]);
+
   /* ── write cache ── */
   useEffect(() => {
     if (!me?.user_id || !conversationId || !data?.data) return;
     writeChatCache(me.user_id, conversationId, data.data);
   }, [conversationId, me?.user_id, data?.data]);
 
-  /* ── resolve messages ── */
-  const messages =
-    (data?.data?.length ?? 0) > 0
-      ? (data?.data ?? [])
-      : liveMessages.length > 0
-        ? liveMessages
-        : cachedMessages;
+  /* ── resolve messages: merge API + live socket messages ── */
+  const messages = useMemo(() => {
+    const apiMessages = data?.data ?? [];
+    if (apiMessages.length === 0 && liveMessages.length === 0) return cachedMessages;
+    // Merge: start with API data, append any live messages not already in API data
+    const knownIds = new Set(apiMessages.map((m) => m.message_id));
+    const newLive = liveMessages.filter((m) => !knownIds.has(m.message_id));
+    return [...apiMessages, ...newLive];
+  }, [data?.data, liveMessages, cachedMessages]);
 
   /* ── auto-scroll ── */
   useEffect(() => {
@@ -287,12 +350,13 @@ export default function ConversationPage({ params }: Props) {
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span
-              className="text-[14px] font-semibold truncate"
+            <Link
+              href={`/profile?userId=${partner?.other_user_id}`}
+              className="text-[14px] font-semibold truncate hover:underline cursor-pointer"
               style={{ color: 'var(--color-text-primary)' }}
             >
               {partnerName}
-            </span>
+            </Link>
             <span className="inline-flex items-center gap-1 px-1.5 py-px rounded-[3px] bg-[rgba(16,185,129,0.15)]">
               <span
                 className="inline-block w-[5px] h-[5px] rounded-full"
@@ -307,21 +371,61 @@ export default function ConversationPage({ params }: Props) {
 
         <div className="flex gap-1">
           <button
+            onClick={() => { setSearchOpen(!searchOpen); if (searchOpen) { setSearchQuery(''); setDebouncedSearch(''); } }}
             className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 hover:bg-[var(--color-surface-3)] cursor-pointer"
-            style={{ color: 'var(--color-text-secondary)' }}
+            style={{ color: searchOpen ? 'var(--color-brand-400)' : 'var(--color-text-secondary)' }}
             title="Search in conversation"
           >
             <Search size={14} />
           </button>
-          <button
-            className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 hover:bg-[var(--color-surface-3)] cursor-pointer"
-            style={{ color: 'var(--color-text-secondary)' }}
-            title="More"
-          >
-            <MoreVertical size={14} />
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowMenu(!showMenu)}
+              className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 hover:bg-[var(--color-surface-3)] cursor-pointer"
+              style={{ color: 'var(--color-text-secondary)' }}
+              title="More"
+            >
+              <MoreVertical size={14} />
+            </button>
+            {showMenu && (
+              <div
+                className="absolute right-0 top-9 w-40 rounded-lg shadow-xl py-1 z-50"
+                style={{ backgroundColor: 'var(--color-surface-3)', border: '1px solid rgba(255,255,255,0.1)' }}
+              >
+                <button
+                  onClick={async () => {
+                    if (!confirm('Delete this conversation?')) return;
+                    try {
+                      await deleteConversation(conversationId).unwrap();
+                      router.push('/chats');
+                      toast.success('Conversation deleted');
+                    } catch { toast.error('Failed to delete'); }
+                    setShowMenu(false);
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm cursor-pointer hover:bg-[var(--color-surface-4)] transition-colors"
+                  style={{ color: '#f87171' }}
+                >
+                  Delete conversation
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* ═══ Search Bar ═══ */}
+      {searchOpen && (
+        <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.05)]" style={{ background: 'var(--color-surface-0)' }}>
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search messages..."
+            autoFocus
+            className="w-full bg-transparent border-none outline-none text-sm"
+            style={{ color: 'var(--color-text-primary)' }}
+          />
+        </div>
+      )}
 
       {/* ═══ Messages Area ═══ */}
       <div
@@ -398,6 +502,10 @@ export default function ConversationPage({ params }: Props) {
                     boxShadow: mine
                       ? '0 1px 0 rgba(255,255,255,0.08) inset, 0 2px 6px rgba(99,102,241,0.1)'
                       : '0 1px 0 rgba(255,255,255,0.04) inset',
+                    ...(debouncedSearch && msg.content.toLowerCase().includes(debouncedSearch) ? {
+                      borderColor: 'var(--color-brand-400)',
+                      boxShadow: '0 0 0 2px rgba(99,102,241,0.3)',
+                    } : {}),
                   }}
                 >
                   {msg.content}
@@ -436,13 +544,32 @@ export default function ConversationPage({ params }: Props) {
 
           {/* Bottom row */}
           <div className="flex items-center gap-0.5 mt-1.5 pt-2 border-t border-[rgba(255,255,255,0.04)]">
-            <button
-              className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 hover:bg-[var(--color-surface-3)] cursor-pointer"
-              style={{ color: 'var(--color-text-secondary)' }}
-              title="Emoji"
-            >
-              <Smile size={14} />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowEmoji(!showEmoji)}
+                className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 hover:bg-[var(--color-surface-3)] cursor-pointer"
+                style={{ color: showEmoji ? 'var(--color-brand-400)' : 'var(--color-text-secondary)' }}
+                title="Emoji"
+              >
+                <Smile size={14} />
+              </button>
+              {showEmoji && (
+                <div
+                  className="absolute bottom-10 left-0 p-2 rounded-lg shadow-xl z-50"
+                  style={{ backgroundColor: 'var(--color-surface-3)', border: '1px solid rgba(255,255,255,0.1)', display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }}
+                >
+                  {EMOJI_LIST.map((emoji) => (
+                    <button
+                      key={emoji}
+                      onClick={() => { setDraft((prev) => prev + emoji); setShowEmoji(false); }}
+                      className="w-8 h-8 flex items-center justify-center rounded-md text-lg hover:bg-[var(--color-surface-4)] cursor-pointer transition-colors"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button
               className="flex items-center justify-center w-[30px] h-[30px] rounded-md transition-all duration-150 hover:bg-[var(--color-surface-3)] cursor-pointer"
               style={{ color: 'var(--color-text-secondary)' }}

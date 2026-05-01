@@ -4,8 +4,8 @@ export function proxy(req: NextRequest) {
   const token = req.cookies.get('kanban_token')?.value;
   const { pathname } = req.nextUrl;
 
-  // Never intercept API routes — let them pass through to the rewrite proxy
-  if (pathname.startsWith('/api')) {
+  // Never intercept API routes or Socket.IO — let them pass through to the rewrite proxy
+  if (pathname.startsWith('/api') || pathname.startsWith('/socket.io') || pathname.startsWith('/io')) {
     return NextResponse.next();
   }
 

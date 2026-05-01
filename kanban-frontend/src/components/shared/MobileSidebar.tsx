@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Menu } from 'lucide-react';
-import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import { Sidebar } from './Sidebar';
 
 export function MobileSidebarTrigger() {
@@ -19,6 +19,7 @@ export function MobileSidebarTrigger() {
         </button>
       </SheetTrigger>
       <SheetContent side="left" className="p-0 w-64 border-r-0" style={{ backgroundColor: 'var(--color-surface-0)' }}>
+        <SheetTitle className="sr-only">Navigation menu</SheetTitle>
         <Sidebar />
       </SheetContent>
     </Sheet>

@@ -3,7 +3,7 @@
 import { use, useState, useRef, useEffect } from 'react';
 import { notFound } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Settings, Trash2, Loader2, Filter, Search, X, Archive } from 'lucide-react';
+import { Settings, Trash2, Loader2, Filter, Search, X, Archive, LogOut } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,10 +16,11 @@ import { ColumnForm } from '@/components/forms/ColumnForm';
 import { CardDetailModal } from '@/components/board/CardDetailModal';
 import { CanceledView } from '@/components/board/CanceledView';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useGetProjectQuery, useDeleteProjectMutation, useListProjectsQuery } from '@/lib/store/api/projectsApi';
-import { useDeleteColumnMutation, useListColumnsQuery } from '@/lib/store/api/columnsApi';
+import { useGetProjectQuery, useDeleteProjectMutation, useListProjectsQuery, useLeaveProjectMutation } from '@/lib/store/api/projectsApi';
+import { useListColumnsQuery } from '@/lib/store/api/columnsApi';
 import { useListCardsQuery } from '@/lib/store/api/cardsApi';
 import { useGetMeQuery } from '@/lib/store/api/authApi';
+import { useCancelColumnMutation } from '@/lib/store/api/canceledApi';
 import { useRouter } from 'next/navigation';
 import { getRealtimeSocket, connectRealtime } from '@/lib/realtime/socket';
 import type { Card, Column } from '@/lib/types/api';
@@ -32,12 +33,6 @@ const FILTER_LABELS: Record<FilterMode, string> = {
   week: 'This Week',
   month: 'This Month',
 };
-
-interface CanceledEntry {
-  columnName: string;
-  canceledAt: string;
-  cards: Card[];
-}
 
 interface Props {
   params: Promise<{ projectId: string }>;
@@ -52,8 +47,9 @@ export default function BoardPage({ params }: Props) {
   const { data: meData } = useGetMeQuery();
   const me = meData?.data;
   const [deleteProject, { isLoading: deletingProject }] = useDeleteProjectMutation();
-  const [deleteColumn] = useDeleteColumnMutation();
-  const { data: cardsData, refetch: refetchCards } = useListCardsQuery(projectId);
+  const [leaveProject, { isLoading: leavingProject }] = useLeaveProjectMutation();
+  const [cancelColumn] = useCancelColumnMutation();
+  const { refetch: refetchCards } = useListCardsQuery(projectId);
   const { refetch: refetchColumns } = useListColumnsQuery(projectId);
   const { data: projectsListData } = useListProjectsQuery();
 
@@ -83,6 +79,9 @@ export default function BoardPage({ params }: Props) {
       'board.card.updated',
       'board.card.deleted',
       'board.card.moved',
+      'member.role.changed',
+      'member.removed',
+      'member.left',
     ];
 
     boardEvents.forEach((event) => socket.on(event, debouncedRefetch));
@@ -101,6 +100,7 @@ export default function BoardPage({ params }: Props) {
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [cancelColumnTarget, setCancelColumnTarget] = useState<Column | null>(null);
   const [canceledViewOpen, setCanceledViewOpen] = useState(false);
+  const [leaveProjectOpen, setLeaveProjectOpen] = useState(false);
 
   // Filter & search state
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
@@ -108,8 +108,6 @@ export default function BoardPage({ params }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
   const archivedKey = `kanban_archived_projects:${me?.user_id ?? 'guest'}`;
-  const canceledKey = `kanban_canceled_cards:${me?.user_id ?? 'guest'}:${projectId}`;
-
   useEffect(() => {
     if (searchOpen) {
       searchInputRef.current?.focus();
@@ -129,6 +127,7 @@ export default function BoardPage({ params }: Props) {
   }
 
   const project = data.data;
+  const isOwner = project.owner_user_id === me?.user_id;
 
   function handleArchiveProject() {
     try {
@@ -163,27 +162,25 @@ export default function BoardPage({ params }: Props) {
   async function confirmCancelColumn() {
     if (!cancelColumnTarget) return;
     try {
-      // Collect all cards for this column
-      const allCards: Card[] = cardsData?.data ?? [];
-      const columnCards = allCards.filter((c) => c.column_id === cancelColumnTarget.column_id);
-
-      // Archive to localStorage
-      const existing: CanceledEntry[] = JSON.parse(
-        localStorage.getItem(canceledKey) || '[]',
-      );
-      existing.push({
-        columnName: cancelColumnTarget.name,
-        canceledAt: new Date().toISOString(),
-        cards: columnCards,
-      });
-      localStorage.setItem(canceledKey, JSON.stringify(existing));
-
-      // Delete the column
-      await deleteColumn({ projectId, columnId: cancelColumnTarget.column_id }).unwrap();
-      toast.success('Column canceled, cards archived');
+      await cancelColumn({
+        projectId,
+        columnId: cancelColumnTarget.column_id,
+      }).unwrap();
+      toast.success('Column canceled');
       setCancelColumnTarget(null);
     } catch {
       toast.error('Failed to cancel column');
+    }
+  }
+
+  async function confirmLeaveProject() {
+    try {
+      await leaveProject(projectId).unwrap();
+      toast.success('You left the project');
+      setLeaveProjectOpen(false);
+      router.push('/board');
+    } catch {
+      toast.error('Failed to leave project');
     }
   }
 
@@ -309,14 +306,25 @@ export default function BoardPage({ params }: Props) {
                 <Archive className="h-4 w-4" />
                 Archive project
               </DropdownMenuItem>
-              <DropdownMenuItem
-                className="flex items-center gap-2 cursor-pointer text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 focus:text-red-300 focus:bg-red-500/10"
-                onSelect={() => setDeleteProjectOpen(true)}
-                disabled={deletingProject}
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete project
-              </DropdownMenuItem>
+              {isOwner ? (
+                <DropdownMenuItem
+                  className="flex items-center gap-2 cursor-pointer text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 focus:text-red-300 focus:bg-red-500/10"
+                  onSelect={() => setDeleteProjectOpen(true)}
+                  disabled={deletingProject}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete project
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  className="flex items-center gap-2 cursor-pointer text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 focus:text-red-300 focus:bg-red-500/10"
+                  onSelect={() => setLeaveProjectOpen(true)}
+                  disabled={leavingProject}
+                >
+                  <LogOut className="h-4 w-4" />
+                  Leave project
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -465,6 +473,52 @@ export default function BoardPage({ params }: Props) {
               }}
             >
               Cancel Column
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Leave Project Confirmation */}
+      <Dialog open={leaveProjectOpen} onOpenChange={setLeaveProjectOpen}>
+        <DialogContent
+          className="sm:max-w-sm"
+          style={{
+            backgroundColor: 'var(--color-surface-2)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            color: 'var(--color-text-primary)',
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle style={{ color: 'var(--color-text-primary)' }}>Leave Project</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+            Are you sure you want to leave &quot;{project.project_name}&quot;? You will lose access to this project and its boards.
+          </p>
+          <div className="flex justify-end gap-3 pt-4">
+            <button
+              type="button"
+              onClick={() => setLeaveProjectOpen(false)}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              style={{
+                backgroundColor: 'var(--color-surface-4)',
+                color: 'var(--color-text-primary)',
+                border: '1px solid rgba(255,255,255,0.1)',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmLeaveProject}
+              disabled={leavingProject}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-all active:scale-95 disabled:opacity-50"
+              style={{
+                backgroundColor: 'rgba(239,68,68,0.15)',
+                color: '#f87171',
+                border: '1px solid rgba(239,68,68,0.3)',
+              }}
+            >
+              {leavingProject ? 'Leaving...' : 'Leave Project'}
             </button>
           </div>
         </DialogContent>

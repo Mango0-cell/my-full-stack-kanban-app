@@ -15,7 +15,7 @@ import {
 import { MarkdownEditor } from '@/components/shared/MarkdownEditor';
 import { useListCommentsQuery, useAddCommentMutation, useDeleteCommentMutation } from '@/lib/store/api/commentsApi';
 import { useUpdateCardMutation, useDeleteCardMutation, useGetCardQuery } from '@/lib/store/api/cardsApi';
-import { useListColumnsQuery } from '@/lib/store/api/columnsApi';
+import { useCancelCardMutation } from '@/lib/store/api/canceledApi';
 import { useListMembersQuery } from '@/lib/store/api/projectsApi';
 import { useAppSelector } from '@/lib/hooks/redux';
 import { selectCurrentUser } from '@/lib/store/slices/authSlice';
@@ -36,6 +36,7 @@ export function CardDetailModal({ card, projectId, onClose }: CardDetailModalPro
   const currentUser = useAppSelector(selectCurrentUser);
   const [updateCard, { isLoading: updating }] = useUpdateCardMutation();
   const [deleteCard, { isLoading: deleting }] = useDeleteCardMutation();
+  const [cancelCard] = useCancelCardMutation();
   const [addComment, { isLoading: addingComment }] = useAddCommentMutation();
   const [deleteComment] = useDeleteCommentMutation();
 
@@ -46,9 +47,6 @@ export function CardDetailModal({ card, projectId, onClose }: CardDetailModalPro
 
   const { data: membersData } = useListMembersQuery(projectId, { skip: !card });
   const members = membersData?.data ?? [];
-
-  const { data: columnsData } = useListColumnsQuery(projectId, { skip: !card });
-  const columns = columnsData?.data ?? [];
 
   const { data: liveCardData } = useGetCardQuery(card?.card_id ?? 0, { skip: !card });
   const liveCard = liveCardData?.data ?? card;
@@ -119,17 +117,9 @@ export function CardDetailModal({ card, projectId, onClose }: CardDetailModalPro
 
   async function handleCancelCard() {
     if (!card) return;
-    const columnName = columns.find((c) => c.column_id === card.column_id)?.name ?? 'Unknown';
-    const canceledKey = `kanban_canceled_cards:${currentUser?.user_id ?? 'guest'}:${projectId}`;
     try {
-      const raw = localStorage.getItem(canceledKey);
-      const existing: Array<{ columnName: string; canceledAt: string; cards: Card[] }> = raw ? JSON.parse(raw) : [];
-      existing.push({ columnName, canceledAt: new Date().toISOString(), cards: [card] });
-      localStorage.setItem(canceledKey, JSON.stringify(existing));
-    } catch { /* ignore localStorage errors */ }
-    try {
-      await deleteCard({ cardId: card.card_id, projectId }).unwrap();
-      toast.success('Card canceled and archived');
+      await cancelCard({ projectId, cardId: card.card_id }).unwrap();
+      toast.success('Card canceled');
       onClose();
     } catch { toast.error('Failed to cancel card'); }
   }

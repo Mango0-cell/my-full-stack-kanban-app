@@ -1,31 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Archive, X, Flag, Calendar, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { PixelDino } from '@/components/shared/PixelDino';
-import { useGetMeQuery } from '@/lib/store/api/authApi';
 import { useListColumnsQuery } from '@/lib/store/api/columnsApi';
-import { useCreateCardMutation } from '@/lib/store/api/cardsApi';
-import type { Card } from '@/lib/types/api';
-
-interface CanceledEntry {
-  columnName: string;
-  canceledAt: string;
-  cards: Card[];
-}
-
-interface OrphanCard {
-  card: Card;
-  originalColumn: string;
-  canceledAt: string;
-}
-
-/** New storage format with orphanCards for cards whose column group was deleted */
-interface CanceledStorage {
-  entries: CanceledEntry[];
-  orphanCards: OrphanCard[];
-}
+import {
+  useDeleteCanceledCardMutation,
+  useDeleteCanceledGroupMutation,
+  useListCanceledItemsQuery,
+  useUnarchiveCanceledCardMutation,
+} from '@/lib/store/api/canceledApi';
+import type { CanceledCardSnapshot } from '@/lib/types/api';
+import { connectRealtime } from '@/lib/realtime/socket';
 
 interface CanceledViewProps {
   open: boolean;
@@ -40,9 +27,9 @@ interface UnarchiveState {
 
 function getPriorityBadge(priority: string) {
   const map: Record<string, { label: string; color: string; bg: string }> = {
-    low:    { label: 'Low',    color: '#34d399', bg: 'rgba(52,211,153,0.12)' },
+    low: { label: 'Low', color: '#34d399', bg: 'rgba(52,211,153,0.12)' },
     medium: { label: 'Medium', color: '#fbbf24', bg: 'rgba(251,191,36,0.12)' },
-    high:   { label: 'High',   color: '#fb923c', bg: 'rgba(251,146,60,0.12)' },
+    high: { label: 'High', color: '#fb923c', bg: 'rgba(251,146,60,0.12)' },
     urgent: { label: 'Urgent', color: '#f87171', bg: 'rgba(248,113,113,0.12)' },
   };
   return map[priority] ?? { label: priority, color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' };
@@ -60,81 +47,29 @@ function formatDate(iso: string) {
   }
 }
 
-/** Read localStorage, handling both old (CanceledEntry[]) and new (CanceledStorage) formats */
-function readStorage(canceledKey: string): CanceledStorage {
-  try {
-    const raw = localStorage.getItem(canceledKey);
-    if (!raw) return { entries: [], orphanCards: [] };
-    const parsed = JSON.parse(raw);
-    // Old format: plain array of CanceledEntry
-    if (Array.isArray(parsed)) {
-      return { entries: parsed as CanceledEntry[], orphanCards: [] };
-    }
-    // New format
-    const storage = parsed as CanceledStorage;
-    return {
-      entries: storage.entries ?? [],
-      orphanCards: storage.orphanCards ?? [],
-    };
-  } catch {
-    return { entries: [], orphanCards: [] };
-  }
-}
-
-function writeStorage(canceledKey: string, storage: CanceledStorage) {
-  localStorage.setItem(canceledKey, JSON.stringify(storage));
-}
-
-/* ── Unarchive button for entry-based cards ── */
 interface UnarchiveButtonProps {
-  card: Card;
-  storageLocation: { type: 'entry'; entryIndex: number; cardIndex: number } | { type: 'orphan'; orphanIndex: number };
+  canceledCard: CanceledCardSnapshot;
   projectId: number;
-  canceledKey: string;
   onSuccess: () => void;
 }
 
-function UnarchiveButton({ card, storageLocation, projectId, canceledKey, onSuccess }: UnarchiveButtonProps) {
+function UnarchiveButton({ canceledCard, projectId, onSuccess }: UnarchiveButtonProps) {
   const [state, setState] = useState<UnarchiveState>({ selecting: false, targetColumnId: null });
   const { data: columnsData } = useListColumnsQuery(projectId);
-  const [createCard, { isLoading: isCreating }] = useCreateCardMutation();
+  const [unarchiveCard, { isLoading: isRestoring }] = useUnarchiveCanceledCardMutation();
 
   const columns = columnsData?.data ?? [];
 
   async function handleConfirm() {
     if (!state.targetColumnId) return;
     try {
-      await createCard({
-        columnId: state.targetColumnId,
+      await unarchiveCard({
         projectId,
-        title: card.title,
-        description: card.description,
-        priority: card.priority,
-        due_date: card.due_date,
-        assigned_user_id: card.assigned_user_id,
+        canceledCardId: canceledCard.canceled_card_id,
+        target_column_id: state.targetColumnId,
       }).unwrap();
-
-      // Remove the card from localStorage
-      try {
-        const storage = readStorage(canceledKey);
-        if (storageLocation.type === 'entry') {
-          const { entryIndex, cardIndex } = storageLocation;
-          const entry = storage.entries[entryIndex];
-          const updatedCards = entry.cards.filter((_, idx) => idx !== cardIndex);
-          if (updatedCards.length === 0) {
-            storage.entries = storage.entries.filter((_, idx) => idx !== entryIndex);
-          } else {
-            storage.entries[entryIndex] = { ...entry, cards: updatedCards };
-          }
-        } else {
-          storage.orphanCards = storage.orphanCards.filter((_, idx) => idx !== storageLocation.orphanIndex);
-        }
-        writeStorage(canceledKey, storage);
-      } catch {
-        // ignore localStorage errors
-      }
-
       toast.success('Card restored to board');
+      setState({ selecting: false, targetColumnId: null });
       onSuccess();
     } catch {
       toast.error('Failed to restore card');
@@ -180,12 +115,12 @@ function UnarchiveButton({ card, storageLocation, projectId, canceledKey, onSucc
         ))}
       </select>
       <button
-        disabled={!state.targetColumnId || isCreating}
+        disabled={!state.targetColumnId || isRestoring}
         onClick={handleConfirm}
         className="h-7 px-3 rounded-md text-xs font-medium disabled:opacity-50 cursor-pointer hover:opacity-90 transition-colors"
         style={{ backgroundColor: 'var(--color-brand-500)', color: '#fff' }}
       >
-        {isCreating ? '...' : 'Send'}
+        {isRestoring ? '...' : 'Send'}
       </button>
       <button
         onClick={() => setState({ selecting: false, targetColumnId: null })}
@@ -198,15 +133,14 @@ function UnarchiveButton({ card, storageLocation, projectId, canceledKey, onSucc
   );
 }
 
-/* ── Shared card row component ── */
 interface CardRowProps {
-  card: Card;
-  columnName: string;
+  card: CanceledCardSnapshot;
   onDelete: () => void;
-  unarchiveProps: UnarchiveButtonProps;
+  onUnarchiveDone: () => void;
+  projectId: number;
 }
 
-function CardRow({ card, columnName, onDelete, unarchiveProps }: CardRowProps) {
+function CardRow({ card, onDelete, onUnarchiveDone, projectId }: CardRowProps) {
   const badge = getPriorityBadge(card.priority);
   return (
     <div
@@ -216,7 +150,6 @@ function CardRow({ card, columnName, onDelete, unarchiveProps }: CardRowProps) {
         border: '1px solid rgba(255,255,255,0.06)',
       }}
     >
-      {/* Left: icon + info */}
       <div className="flex items-start gap-4">
         <div
           className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
@@ -228,17 +161,11 @@ function CardRow({ card, columnName, onDelete, unarchiveProps }: CardRowProps) {
           <Flag className="h-5 w-5" style={{ color: badge.color }} />
         </div>
         <div className="min-w-0 space-y-1">
-          <h3
-            className="text-sm font-semibold"
-            style={{ color: 'var(--color-text-primary)' }}
-          >
+          <h3 className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
             {card.title}
           </h3>
           {card.description && (
-            <p
-              className="text-xs line-clamp-2"
-              style={{ color: 'var(--color-text-secondary)' }}
-            >
+            <p className="text-xs line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
               {card.description}
             </p>
           )}
@@ -261,13 +188,10 @@ function CardRow({ card, columnName, onDelete, unarchiveProps }: CardRowProps) {
                 {formatDate(card.due_date)}
               </span>
             )}
-            <span
-              className="text-[11px]"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
+            <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
               from{' '}
               <strong style={{ color: 'var(--color-text-secondary)' }}>
-                {columnName}
+                {card.original_column_name}
               </strong>
             </span>
           </div>
@@ -286,77 +210,80 @@ function CardRow({ card, columnName, onDelete, unarchiveProps }: CardRowProps) {
         >
           Delete
         </button>
-        <UnarchiveButton {...unarchiveProps} />
+        <UnarchiveButton canceledCard={card} projectId={projectId} onSuccess={onUnarchiveDone} />
       </div>
     </div>
   );
 }
 
 export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
-  const [storageVersion, setStorageVersion] = useState(0);
-  const { data: meData } = useGetMeQuery();
-  const me = meData?.data;
-  const canceledKey = `kanban_canceled_cards:${me?.user_id ?? 'guest'}:${projectId}`;
+  const { data, isFetching, refetch } = useListCanceledItemsQuery(projectId, { skip: !open });
+  const [deleteCanceledCard] = useDeleteCanceledCardMutation();
+  const [deleteCanceledGroup] = useDeleteCanceledGroupMutation();
 
-  void storageVersion;
-  const storage = open ? readStorage(canceledKey) : { entries: [], orphanCards: [] };
-  const { entries, orphanCards } = storage;
+  useEffect(() => {
+    if (!open) return;
+    void refetch();
+  }, [open, refetch]);
 
-  function reloadEntries() {
-    setStorageVersion((prev) => prev + 1);
-  }
+  useEffect(() => {
+    if (!open) return;
+    const socket = connectRealtime();
 
-  function deleteCard(entryIndex: number, cardIndex: number) {
+    const joinProjectRoom = () => {
+      socket.emit('room.project.join', { projectId: Number(projectId) });
+    };
+
+    if (socket.connected) {
+      joinProjectRoom();
+    }
+    socket.on('connect', joinProjectRoom);
+
+    const onCanceledUpdate = (payload?: { project_id?: number }) => {
+      if (payload?.project_id && payload.project_id !== projectId) return;
+      void refetch();
+    };
+
+    const canceledEvents = [
+      'board.canceled.updated',
+      'board.canceled.card.canceled',
+      'board.canceled.column.canceled',
+      'board.canceled.card.unarchived',
+      'board.canceled.card.deleted',
+      'board.canceled.group.deleted',
+    ] as const;
+
+    canceledEvents.forEach((eventName) => socket.on(eventName, onCanceledUpdate));
+
+    return () => {
+      socket.off('connect', joinProjectRoom);
+      canceledEvents.forEach((eventName) => socket.off(eventName, onCanceledUpdate));
+    };
+  }, [open, projectId, refetch]);
+
+  const entries = data?.data.entries ?? [];
+  const orphanCards = data?.data.orphan_cards ?? [];
+  const totalCards = entries.reduce((sum, e) => sum + e.cards.length, 0) + orphanCards.length;
+
+  async function handleDeleteCard(canceledCardId: number) {
     try {
-      const s = readStorage(canceledKey);
-      const entry = s.entries[entryIndex];
-      const updatedCards = entry.cards.filter((_, idx) => idx !== cardIndex);
-      if (updatedCards.length === 0) {
-        s.entries = s.entries.filter((_, idx) => idx !== entryIndex);
-      } else {
-        s.entries[entryIndex] = { ...entry, cards: updatedCards };
-      }
-      writeStorage(canceledKey, s);
-      reloadEntries();
+      await deleteCanceledCard({ projectId, canceledCardId }).unwrap();
       toast.success('Card deleted from canceled list');
+      await refetch();
     } catch {
       toast.error('Failed to delete card');
     }
   }
 
-  function deleteOrphanCard(orphanIndex: number) {
+  async function handleDeleteGroup(groupId: number) {
     try {
-      const s = readStorage(canceledKey);
-      s.orphanCards = s.orphanCards.filter((_, idx) => idx !== orphanIndex);
-      writeStorage(canceledKey, s);
-      reloadEntries();
-      toast.success('Card deleted from canceled list');
-    } catch {
-      toast.error('Failed to delete card');
-    }
-  }
-
-  function deleteCanceledColumn(entryIndex: number) {
-    try {
-      const s = readStorage(canceledKey);
-      const entry = s.entries[entryIndex];
-      // Move cards to orphanCards instead of deleting them
-      const newOrphans: OrphanCard[] = entry.cards.map((card) => ({
-        card,
-        originalColumn: entry.columnName,
-        canceledAt: entry.canceledAt,
-      }));
-      s.orphanCards = [...s.orphanCards, ...newOrphans];
-      s.entries = s.entries.filter((_, idx) => idx !== entryIndex);
-      writeStorage(canceledKey, s);
-      reloadEntries();
-      toast.success('Column group removed — cards moved to Ungrouped');
+      await deleteCanceledGroup({ projectId, groupId }).unwrap();
+      toast.success('Column and its cards deleted');
+      await refetch();
     } catch {
       toast.error('Failed to delete canceled column');
     }
   }
-
-  const totalCards = entries.reduce((sum, e) => sum + e.cards.length, 0) + orphanCards.length;
 
   if (!open) return null;
 
@@ -365,7 +292,6 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
       className="fixed inset-0 top-14 z-[60] flex flex-col"
       style={{ backgroundColor: 'var(--color-surface-0)' }}
     >
-      {/* Header */}
       <div
         className="flex items-center justify-between px-6 py-4 shrink-0 border-b"
         style={{
@@ -375,10 +301,7 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
       >
         <div className="flex items-center gap-3">
           <Archive className="h-5 w-5" style={{ color: '#fbbf24' }} />
-          <h2
-            className="text-lg font-semibold"
-            style={{ color: 'var(--color-text-primary)' }}
-          >
+          <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
             Canceled
           </h2>
           <span
@@ -400,9 +323,14 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
         </button>
       </div>
 
-      {/* Body */}
       <div className="flex-1 overflow-y-auto p-6">
-        {entries.length === 0 && orphanCards.length === 0 ? (
+        {isFetching ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-4">
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              Loading canceled items...
+            </p>
+          </div>
+        ) : entries.length === 0 && orphanCards.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-4">
             <PixelDino size={220} />
             <h3 className="text-xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>
@@ -414,16 +342,14 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
           </div>
         ) : (
           <div className="flex flex-col gap-8 max-w-3xl mx-auto">
-            {/* Grouped entries */}
-            {entries.map((entry, entryIndex) => (
-              <div key={entryIndex} className="flex flex-col gap-3">
-                {/* Section header */}
+            {entries.map((entry) => (
+              <div key={entry.canceled_group_id} className="flex flex-col gap-3">
                 <div className="flex items-center justify-between pb-1">
                   <span
                     className="text-[11px] font-semibold uppercase tracking-widest"
                     style={{ color: 'var(--color-text-secondary)' }}
                   >
-                    {entry.columnName}
+                    {entry.column_name}
                   </span>
                   <span
                     className="text-[11px]"
@@ -432,10 +358,10 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
                       fontFamily: 'var(--font-mono)',
                     }}
                   >
-                    {formatDate(entry.canceledAt)}
+                    {formatDate(entry.canceled_at)}
                   </span>
                   <button
-                    onClick={() => deleteCanceledColumn(entryIndex)}
+                    onClick={() => void handleDeleteGroup(entry.canceled_group_id)}
                     className="text-[11px] px-2 py-1 rounded-md cursor-pointer hover:opacity-80 transition-colors"
                     style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.12)' }}
                   >
@@ -449,19 +375,13 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
                   </p>
                 ) : (
                   <div>
-                    {entry.cards.map((card, cardIndex) => (
+                    {entry.cards.map((card) => (
                       <CardRow
-                        key={card.card_id}
+                        key={card.canceled_card_id}
                         card={card}
-                        columnName={entry.columnName}
-                        onDelete={() => deleteCard(entryIndex, cardIndex)}
-                        unarchiveProps={{
-                          card,
-                          storageLocation: { type: 'entry', entryIndex, cardIndex },
-                          projectId,
-                          canceledKey,
-                          onSuccess: reloadEntries,
-                        }}
+                        projectId={projectId}
+                        onDelete={() => void handleDeleteCard(card.canceled_card_id)}
+                        onUnarchiveDone={() => void refetch()}
                       />
                     ))}
                   </div>
@@ -469,7 +389,6 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
               </div>
             ))}
 
-            {/* Ungrouped (orphan) cards */}
             {orphanCards.length > 0 && (
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between pb-1">
@@ -477,29 +396,20 @@ export function CanceledView({ open, onClose, projectId }: CanceledViewProps) {
                     className="text-[11px] font-semibold uppercase tracking-widest"
                     style={{ color: 'var(--color-text-secondary)' }}
                   >
-                    Ungrouped Cards
+                    Cards
                   </span>
-                  <span
-                    className="text-[11px]"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
+                  <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
                     {orphanCards.length} cards
                   </span>
                 </div>
                 <div>
-                  {orphanCards.map((orphan, orphanIndex) => (
+                  {orphanCards.map((card) => (
                     <CardRow
-                      key={`orphan-${orphan.card.card_id}-${orphanIndex}`}
-                      card={orphan.card}
-                      columnName={orphan.originalColumn}
-                      onDelete={() => deleteOrphanCard(orphanIndex)}
-                      unarchiveProps={{
-                        card: orphan.card,
-                        storageLocation: { type: 'orphan', orphanIndex },
-                        projectId,
-                        canceledKey,
-                        onSuccess: reloadEntries,
-                      }}
+                      key={card.canceled_card_id}
+                      card={card}
+                      projectId={projectId}
+                      onDelete={() => void handleDeleteCard(card.canceled_card_id)}
+                      onUnarchiveDone={() => void refetch()}
                     />
                   ))}
                 </div>

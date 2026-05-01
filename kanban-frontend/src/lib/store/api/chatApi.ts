@@ -21,6 +21,17 @@ export const chatApi = baseApi.injectEndpoints({
         ...(arg.conversation_id ? [{ type: 'Chat' as const, id: arg.conversation_id }] : []),
       ],
     }),
+    findOrCreateConversation: build.mutation<
+      ApiResponse<{ conversation_id: number }>,
+      { recipient_user_id: number }
+    >({
+      query: (body) => ({ url: '/chat/conversations', method: 'POST', body }),
+      invalidatesTags: ['Chat'],
+    }),
+    deleteConversation: build.mutation<ApiResponse<null>, number>({
+      query: (id) => ({ url: `/chat/conversations/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['Chat'],
+    }),
   }),
 });
 
@@ -28,4 +39,6 @@ export const {
   useListConversationsQuery,
   useListMessagesQuery,
   useSendMessageMutation,
+  useFindOrCreateConversationMutation,
+  useDeleteConversationMutation,
 } = chatApi;

@@ -3,11 +3,11 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Plus, Clock, CheckCheck, X } from 'lucide-react';
-import { useListConversationsQuery } from '@/lib/store/api/chatApi';
-import { useSendMessageMutation } from '@/lib/store/api/chatApi';
+import { useListConversationsQuery, useFindOrCreateConversationMutation } from '@/lib/store/api/chatApi';
 import { useGetMeQuery } from '@/lib/store/api/authApi';
 import { useSearchUsersQuery } from '@/lib/store/api/usersApi';
 import { PixelDino } from '@/components/shared/PixelDino';
+import { getRealtimeSocket, connectRealtime } from '@/lib/realtime/socket';
 import toast from 'react-hot-toast';
 
 /* ---------- helpers ---------- */
@@ -226,7 +226,7 @@ function NewMessageDialog({
     skip: userSearch.trim().length < 2,
   });
   const foundUsers = usersData?.data ?? [];
-  const [sendMessage, { isLoading }] = useSendMessageMutation();
+  const [findOrCreate, { isLoading }] = useFindOrCreateConversationMutation();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -238,10 +238,7 @@ function NewMessageDialog({
 
   async function handleSelectUser(userId: number) {
     try {
-      const response = await sendMessage({
-        recipient_user_id: userId,
-        content: 'Hi! \uD83D\uDC4B',
-      }).unwrap();
+      const response = await findOrCreate({ recipient_user_id: userId }).unwrap();
       onClose();
       router.push(`/chats/${response.data.conversation_id}`);
     } catch {
@@ -335,7 +332,7 @@ function NewMessageDialog({
 
 export default function ChatsPage() {
   const router = useRouter();
-  const { data, isLoading } = useListConversationsQuery();
+  const { data, isLoading, refetch: refetchConversations } = useListConversationsQuery();
   const { data: meData } = useGetMeQuery();
   const me = meData?.data;
   const conversations = data?.data ?? [];
@@ -345,6 +342,21 @@ export default function ChatsPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [cacheCountdown, setCacheCountdown] = useState(0);
   const [newMessageOpen, setNewMessageOpen] = useState(false);
+
+  // Realtime: refetch conversations when new messages arrive
+  useEffect(() => {
+    // Get socket instance first, register listeners, THEN connect
+    const socket = getRealtimeSocket();
+    const onRefresh = () => refetchConversations();
+    socket.on('chat.message.received', onRefresh);
+    socket.on('chat.message.sent', onRefresh);
+    // Connect after listeners are registered (no-op if already connected)
+    connectRealtime();
+    return () => {
+      socket.off('chat.message.received', onRefresh);
+      socket.off('chat.message.sent', onRefresh);
+    };
+  }, [refetchConversations]);
 
   // Cache countdown timer (use a generic 7-day estimate when no conversation selected)
   useEffect(() => {
@@ -483,7 +495,7 @@ export default function ChatsPage() {
             onChange={(e) => setSearch(e.target.value)}
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
-            placeholder="Search messages, people..."
+            placeholder="last message, people"
             className="flex-1 bg-transparent border-none outline-none text-[13px]"
             style={{ color: 'var(--color-text-primary)' }}
           />

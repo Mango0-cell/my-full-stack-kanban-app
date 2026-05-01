@@ -38,6 +38,18 @@ export const inviteApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ['Invitation', 'Project', 'Member', 'Notification'],
     }),
+    cancelInvitation: build.mutation<ApiResponse<null>, number>({
+      query: (id) => ({ url: `/invitations/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['Invitation', 'Member'],
+    }),
+    updateInvitationRole: build.mutation<ApiResponse<Invitation>, { id: number; role_name: string }>({
+      query: ({ id, ...body }) => ({ url: `/invitations/${id}`, method: 'PUT', body }),
+      invalidatesTags: ['Invitation', 'Member'],
+    }),
+    declineInvite: build.mutation<ApiResponse<null>, number>({
+      query: (id) => ({ url: `/invitations/${id}/decline`, method: 'POST' }),
+      invalidatesTags: ['Invitation', 'Notification', 'Member'],
+    }),
   }),
 });
 
@@ -47,4 +59,7 @@ export const {
   useListSentInvitesQuery,
   useAcceptInviteMutation,
   useAcceptByTokenMutation,
+  useCancelInvitationMutation,
+  useUpdateInvitationRoleMutation,
+  useDeclineInviteMutation,
 } = inviteApi;
