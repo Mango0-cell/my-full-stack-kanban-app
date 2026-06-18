@@ -1,24 +1,29 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { BoardColumn, Card, ProjectMember } from '../entities';
 
 @Injectable()
 export class ProjectAccessService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    @InjectRepository(ProjectMember)
+    private readonly membersRepo: Repository<ProjectMember>,
+    @InjectRepository(BoardColumn)
+    private readonly columnsRepo: Repository<BoardColumn>,
+    @InjectRepository(Card)
+    private readonly cardsRepo: Repository<Card>,
+  ) {}
 
   async assertMember(projectId: number, userId: number) {
-    const { rows } = await this.db.query(
-      `SELECT pm.role_id, r.role_name
-       FROM project_members pm
-       JOIN roles r ON r.role_id = pm.role_id
-       WHERE pm.project_id = $1 AND pm.user_id = $2`,
-      [projectId, userId],
-    );
+    const row = await this.membersRepo
+      .createQueryBuilder('pm')
+      .innerJoin('pm.role', 'r')
+      .where('pm.project_id = :projectId AND pm.user_id = :userId', { projectId, userId })
+      .select(['pm.role_id AS role_id', 'r.role_name AS role_name'])
+      .getRawOne<{ role_id: number; role_name: string }>();
 
-    if (rows.length === 0) {
-      throw new ForbiddenException('Not a member of this project');
-    }
-
-    return rows[0] as { role_id: number; role_name: string };
+    if (!row) throw new ForbiddenException('Not a member of this project');
+    return row;
   }
 
   async assertOwnerOrAdmin(projectId: number, userId: number) {
@@ -40,23 +45,22 @@ export class ProjectAccessService {
   }
 
   async getProjectIdFromColumn(columnId: number): Promise<number> {
-    const { rows } = await this.db.query(
-      'SELECT project_id FROM columns WHERE column_id = $1',
-      [columnId],
-    );
-    if (rows.length === 0) throw new NotFoundException('Column not found');
-    return rows[0].project_id as number;
+    const col = await this.columnsRepo.findOne({
+      where: { column_id: columnId },
+      select: { project_id: true },
+    });
+    if (!col) throw new NotFoundException('Column not found');
+    return col.project_id;
   }
 
   async getProjectIdFromCard(cardId: number): Promise<number> {
-    const { rows } = await this.db.query(
-      `SELECT col.project_id
-       FROM cards c
-       JOIN columns col ON col.column_id = c.column_id
-       WHERE c.card_id = $1`,
-      [cardId],
-    );
-    if (rows.length === 0) throw new NotFoundException('Card not found');
-    return rows[0].project_id as number;
+    const row = await this.cardsRepo
+      .createQueryBuilder('c')
+      .innerJoin('c.column', 'col')
+      .where('c.card_id = :cardId', { cardId })
+      .select('col.project_id', 'project_id')
+      .getRawOne<{ project_id: number }>();
+    if (!row) throw new NotFoundException('Card not found');
+    return row.project_id;
   }
 }

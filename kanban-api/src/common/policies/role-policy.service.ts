@@ -1,5 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { DatabaseService } from '../../database/database.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { BoardColumn, Card, ProjectMember } from '../../entities';
 
 type ProjectRole = 'owner' | 'admin' | 'editor' | 'member' | 'viewer';
 
@@ -11,32 +13,49 @@ export interface ProjectMembershipContext {
 
 @Injectable()
 export class RolePolicyService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    @InjectRepository(ProjectMember)
+    private readonly membersRepo: Repository<ProjectMember>,
+    @InjectRepository(BoardColumn)
+    private readonly columnsRepo: Repository<BoardColumn>,
+    @InjectRepository(Card)
+    private readonly cardsRepo: Repository<Card>,
+  ) {}
 
-  private readonly boardWriteRoles = new Set<ProjectRole>(['owner', 'admin', 'editor', 'member']);
+  private readonly boardWriteRoles = new Set<ProjectRole>([
+    'owner',
+    'admin',
+    'editor',
+    'member',
+  ]);
   private readonly collaboratorManagerRoles = new Set<ProjectRole>(['owner', 'admin']);
   private readonly privilegedRoles = new Set<ProjectRole>(['owner', 'admin']);
 
-  async getProjectMembership(projectId: number, userId: number): Promise<ProjectMembershipContext> {
-    const { rows } = await this.db.query(
-      `SELECT p.project_id, p.owner_user_id, r.role_name
-       FROM projects p
-       JOIN project_members pm ON pm.project_id = p.project_id
-       JOIN roles r ON r.role_id = pm.role_id
-       WHERE p.project_id = $1 AND pm.user_id = $2`,
-      [projectId, userId],
-    );
-    if (rows.length === 0) {
-      throw new ForbiddenException('Not a member of this project');
-    }
-    return rows[0] as ProjectMembershipContext;
+  async getProjectMembership(
+    projectId: number,
+    userId: number,
+  ): Promise<ProjectMembershipContext> {
+    const row = await this.membersRepo
+      .createQueryBuilder('pm')
+      .innerJoin('pm.project', 'p')
+      .innerJoin('pm.role', 'r')
+      .where('p.project_id = :projectId AND pm.user_id = :userId', { projectId, userId })
+      .select([
+        'p.project_id AS project_id',
+        'p.owner_user_id AS owner_user_id',
+        'r.role_name AS role_name',
+      ])
+      .getRawOne<ProjectMembershipContext>();
+
+    if (!row) throw new ForbiddenException('Not a member of this project');
+    return row;
   }
 
-  async assertProjectReadable(projectId: number, userId: number): Promise<ProjectMembershipContext> {
+  async assertProjectReadable(projectId: number, userId: number) {
     return this.getProjectMembership(projectId, userId);
   }
 
-  async assertProjectBoardWrite(projectId: number, userId: number): Promise<ProjectMembershipContext> {
+  async assertProjectBoardWrite(projectId: number, userId: number) {
     const membership = await this.getProjectMembership(projectId, userId);
     if (!this.boardWriteRoles.has(membership.role_name)) {
       throw new ForbiddenException('Requires editor or admin role');
@@ -44,7 +63,7 @@ export class RolePolicyService {
     return membership;
   }
 
-  async assertProjectCollaboratorManage(projectId: number, userId: number): Promise<ProjectMembershipContext> {
+  async assertProjectCollaboratorManage(projectId: number, userId: number) {
     const membership = await this.getProjectMembership(projectId, userId);
     if (!this.collaboratorManagerRoles.has(membership.role_name)) {
       throw new ForbiddenException('Requires admin role');
@@ -52,7 +71,7 @@ export class RolePolicyService {
     return membership;
   }
 
-  async assertProjectOwner(projectId: number, userId: number): Promise<ProjectMembershipContext> {
+  async assertProjectOwner(projectId: number, userId: number) {
     const membership = await this.getProjectMembership(projectId, userId);
     if (membership.owner_user_id !== userId) {
       throw new ForbiddenException('Requires owner role');
@@ -61,24 +80,23 @@ export class RolePolicyService {
   }
 
   async getCardProjectId(cardId: number): Promise<number> {
-    const { rows } = await this.db.query(
-      `SELECT col.project_id
-       FROM cards c
-       JOIN columns col ON col.column_id = c.column_id
-       WHERE c.card_id = $1`,
-      [cardId],
-    );
-    if (rows.length === 0) throw new NotFoundException('Card not found');
-    return rows[0].project_id as number;
+    const row = await this.cardsRepo
+      .createQueryBuilder('c')
+      .innerJoin('c.column', 'col')
+      .where('c.card_id = :cardId', { cardId })
+      .select('col.project_id', 'project_id')
+      .getRawOne<{ project_id: number }>();
+    if (!row) throw new NotFoundException('Card not found');
+    return row.project_id;
   }
 
   async getColumnProjectId(columnId: number): Promise<number> {
-    const { rows } = await this.db.query(
-      'SELECT project_id FROM columns WHERE column_id = $1',
-      [columnId],
-    );
-    if (rows.length === 0) throw new NotFoundException('Column not found');
-    return rows[0].project_id as number;
+    const col = await this.columnsRepo.findOne({
+      where: { column_id: columnId },
+      select: { project_id: true },
+    });
+    if (!col) throw new NotFoundException('Column not found');
+    return col.project_id;
   }
 
   isPrivilegedRole(roleName: string): boolean {

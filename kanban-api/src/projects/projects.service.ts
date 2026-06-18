@@ -1,18 +1,31 @@
 import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
-  ForbiddenException,
-  ConflictException,
-  BadRequestException,
 } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, In, Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
+import { Project, ProjectMember, Role, User } from '../entities';
 import { RolePolicyService } from '../common/policies/role-policy.service';
 import { RealtimeEventsService } from '../realtime/realtime-events.service';
+
+const PG_UNIQUE_VIOLATION = '23505';
 
 @Injectable()
 export class ProjectsService {
   constructor(
-    private db: DatabaseService,
+    @InjectRepository(Project)
+    private readonly projectsRepo: Repository<Project>,
+    @InjectRepository(ProjectMember)
+    private readonly membersRepo: Repository<ProjectMember>,
+    @InjectRepository(Role)
+    private readonly rolesRepo: Repository<Role>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
+    private readonly dataSource: DataSource,
     private readonly rolePolicy: RolePolicyService,
     private readonly realtimeEvents: RealtimeEventsService,
   ) {}
@@ -20,213 +33,257 @@ export class ProjectsService {
   private async getRoleByName(roleName: string) {
     const normalizedRole = roleName.trim().toLowerCase();
     const candidates =
-      normalizedRole === 'editor' ? ['editor', 'member'] : normalizedRole === 'member' ? ['member', 'editor'] : [normalizedRole];
-    const { rows } = await this.db.query(
-      `SELECT role_id, role_name
-       FROM roles
-       WHERE role_name = ANY($1::text[])
-       ORDER BY CASE WHEN role_name = $2 THEN 0 ELSE 1 END
-       LIMIT 1`,
-      [candidates, normalizedRole],
-    );
-    if (rows.length === 0) throw new BadRequestException('Invalid role name');
-    return rows[0] as { role_id: number; role_name: string };
+      normalizedRole === 'editor'
+        ? ['editor', 'member']
+        : normalizedRole === 'member'
+          ? ['member', 'editor']
+          : [normalizedRole];
+
+    const roles = await this.rolesRepo.find({
+      where: { role_name: In(candidates) },
+    });
+    if (roles.length === 0) throw new BadRequestException('Invalid role name');
+    // Prefer exact match
+    const exact = roles.find((r) => r.role_name === normalizedRole);
+    const picked = exact ?? roles[0];
+    return { role_id: picked.role_id, role_name: picked.role_name };
   }
 
   private async getMemberRole(projectId: number, targetUserId: number) {
-    const { rows } = await this.db.query(
-      `SELECT pm.user_id, r.role_name
-       FROM project_members pm
-       JOIN roles r ON r.role_id = pm.role_id
-       WHERE pm.project_id = $1 AND pm.user_id = $2`,
-      [projectId, targetUserId],
-    );
-    if (rows.length === 0) throw new NotFoundException('Member not found');
-    return rows[0] as { user_id: number; role_name: string };
+    const row = await this.membersRepo
+      .createQueryBuilder('pm')
+      .innerJoin('pm.role', 'r')
+      .where('pm.project_id = :projectId AND pm.user_id = :targetUserId', {
+        projectId,
+        targetUserId,
+      })
+      .select(['pm.user_id AS user_id', 'r.role_name AS role_name'])
+      .getRawOne<{ user_id: number; role_name: string }>();
+    if (!row) throw new NotFoundException('Member not found');
+    return row;
   }
 
   async listProjects(userId: number) {
-    const { rows } = await this.db.query(
-      `SELECT p.project_id, p.project_name, p.description, p.owner_user_id,
-              p.created_at, p.updated_at, r.role_name AS member_role
-       FROM projects p
-       JOIN project_members pm ON pm.project_id = p.project_id
-       JOIN roles r ON r.role_id = pm.role_id
-       WHERE pm.user_id = $1
-       ORDER BY p.created_at DESC`,
-      [userId],
-    );
-    return rows;
+    return this.projectsRepo
+      .createQueryBuilder('p')
+      .innerJoin('p.members', 'pm')
+      .innerJoin('pm.role', 'r')
+      .where('pm.user_id = :userId', { userId })
+      .orderBy('p.created_at', 'DESC')
+      .select([
+        'p.project_id AS project_id',
+        'p.project_name AS project_name',
+        'p.description AS description',
+        'p.owner_user_id AS owner_user_id',
+        'p.created_at AS created_at',
+        'p.updated_at AS updated_at',
+        'r.role_name AS member_role',
+      ])
+      .getRawMany();
   }
 
   async createProject(userId: number, projectName: string, description?: string) {
-    const client = await this.db.getClient();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query(
-        `INSERT INTO projects (owner_user_id, project_name, description)
-         VALUES ($1, $2, $3) RETURNING *`,
-        [userId, projectName, description || null],
-      );
-      const project = rows[0];
+    return this.dataSource.transaction(async (manager) => {
+      const project = manager.create(Project, {
+        owner_user_id: userId,
+        project_name: projectName,
+        description: description ?? null,
+      });
+      const savedProject = await manager.save(project);
 
-      const ownerRole = await client.query(
-        'SELECT role_id FROM roles WHERE role_name = $1',
-        ['owner'],
-      );
-      await client.query(
-        `INSERT INTO project_members (project_id, user_id, role_id)
-         VALUES ($1, $2, $3)`,
-        [project.project_id, userId, ownerRole.rows[0].role_id],
-      );
+      const ownerRole = await manager.findOne(Role, { where: { role_name: 'owner' } });
+      if (!ownerRole) throw new Error('Owner role missing from roles table');
 
-      await client.query('COMMIT');
-      return project;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+      const member = manager.create(ProjectMember, {
+        project_id: savedProject.project_id,
+        user_id: userId,
+        role_id: ownerRole.role_id,
+      });
+      await manager.save(member);
+      return savedProject;
+    });
   }
 
   async getProject(projectId: number, userId: number) {
     await this.rolePolicy.assertProjectReadable(projectId, userId);
-    const { rows } = await this.db.query(
-      'SELECT * FROM projects WHERE project_id = $1',
-      [projectId],
-    );
-    if (rows.length === 0) throw new NotFoundException('Project not found');
-    return rows[0];
+    const project = await this.projectsRepo.findOne({ where: { project_id: projectId } });
+    if (!project) throw new NotFoundException('Project not found');
+    return project;
   }
 
-  async updateProject(projectId: number, userId: number, updates: { project_name?: string; description?: string }) {
+  async updateProject(
+    projectId: number,
+    userId: number,
+    updates: { project_name?: string; description?: string },
+  ) {
     await this.rolePolicy.assertProjectCollaboratorManage(projectId, userId);
-    const fields: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
+    const patch: Partial<Project> = {};
+    if (updates.project_name) patch.project_name = updates.project_name;
+    if ('description' in updates) patch.description = updates.description ?? null;
+    if (Object.keys(patch).length === 0) {
+      throw new BadRequestException('No fields to update');
+    }
 
-    if (updates.project_name) { fields.push(`project_name = $${idx}`); values.push(updates.project_name); idx++; }
-    if ('description' in updates) { fields.push(`description = $${idx}`); values.push(updates.description); idx++; }
-    if (fields.length === 0) throw new BadRequestException('No fields to update');
-
-    fields.push(`updated_at = NOW()`);
-    values.push(projectId);
-
-    const { rows } = await this.db.query(
-      `UPDATE projects SET ${fields.join(', ')} WHERE project_id = $${idx} RETURNING *`,
-      values,
+    await this.projectsRepo.update(
+      { project_id: projectId },
+      patch as QueryDeepPartialEntity<Project>,
     );
-    return rows[0];
+    return this.projectsRepo.findOne({ where: { project_id: projectId } });
   }
 
   async deleteProject(projectId: number, userId: number) {
     await this.rolePolicy.assertProjectOwner(projectId, userId);
-    const { rows } = await this.db.query(
-      'DELETE FROM projects WHERE project_id = $1 RETURNING project_id',
-      [projectId],
-    );
-    if (rows.length === 0) throw new NotFoundException('Project not found');
+    const result = await this.projectsRepo.delete({ project_id: projectId });
+    if (!result.affected) throw new NotFoundException('Project not found');
   }
 
   async listMembers(projectId: number, userId: number) {
     await this.rolePolicy.assertProjectReadable(projectId, userId);
-    const { rows } = await this.db.query(
-      `SELECT
-         u.user_id,
-         u.email,
-         u.display_name,
-         u.avatar_url,
-         r.role_name,
-         pm.joined_at,
-         'joined'::text AS membership_status,
-         NULL::integer AS invitation_id,
-         NULL::text AS invitation_status
-       FROM project_members pm
-       JOIN users u ON u.user_id = pm.user_id
-       JOIN roles r ON r.role_id = pm.role_id
-       WHERE pm.project_id = $1
 
-       UNION ALL
+    // Joined members
+    const joined = await this.membersRepo
+      .createQueryBuilder('pm')
+      .innerJoin('pm.user', 'u')
+      .innerJoin('pm.role', 'r')
+      .where('pm.project_id = :projectId', { projectId })
+      .select([
+        'u.user_id AS user_id',
+        'u.email AS email',
+        'u.display_name AS display_name',
+        'u.avatar_url AS avatar_url',
+        'r.role_name AS role_name',
+        'pm.joined_at AS joined_at',
+      ])
+      .getRawMany<{
+        user_id: number;
+        email: string;
+        display_name: string;
+        avatar_url: string | null;
+        role_name: string;
+        joined_at: Date;
+      }>();
 
-       SELECT
-         COALESCE(u.user_id, -i.invitation_id) AS user_id,
-         i.invitee_email AS email,
-         COALESCE(u.display_name, SPLIT_PART(i.invitee_email, '@', 1)) AS display_name,
-         u.avatar_url,
-         r.role_name,
-         i.created_at AS joined_at,
-         'pending'::text AS membership_status,
-         i.invitation_id,
-         i.status AS invitation_status
-       FROM invitations i
-       LEFT JOIN users u
-         ON u.user_id = i.invitee_user_id
-         OR (
-           i.invitee_user_id IS NULL
-           AND LOWER(u.email) = LOWER(i.invitee_email)
-         )
-       JOIN roles r ON r.role_id = i.role_id
-       WHERE i.project_id = $1
-         AND i.status = 'pending'
-         AND NOT EXISTS (
-           SELECT 1
-           FROM project_members pm_existing
-           LEFT JOIN users u_existing ON u_existing.user_id = pm_existing.user_id
-           WHERE pm_existing.project_id = i.project_id
-             AND (
-               (i.invitee_user_id IS NOT NULL AND pm_existing.user_id = i.invitee_user_id)
-               OR (
-                 i.invitee_user_id IS NULL
-                 AND LOWER(u_existing.email) = LOWER(i.invitee_email)
-               )
-             )
-         )
-       ORDER BY joined_at`,
-      [projectId],
+    const joinedRows = joined.map((r) => ({
+      ...r,
+      membership_status: 'joined' as const,
+      invitation_id: null as number | null,
+      invitation_status: null as string | null,
+    }));
+
+    // Pending invitations not already represented as members
+    const joinedUserIds = new Set(joinedRows.map((r) => r.user_id));
+    const joinedEmails = new Set(joinedRows.map((r) => r.email.toLowerCase()));
+
+    const pending = await this.dataSource
+      .createQueryBuilder()
+      .from('invitations', 'i')
+      .leftJoin(
+        'users',
+        'u',
+        '(u.user_id = i.invitee_user_id) OR (i.invitee_user_id IS NULL AND LOWER(u.email) = LOWER(i.invitee_email))',
+      )
+      .innerJoin('roles', 'r', 'r.role_id = i.role_id')
+      .where('i.project_id = :projectId AND i.status = :pending', {
+        projectId,
+        pending: 'pending',
+      })
+      .orderBy('i.created_at', 'ASC')
+      .select([
+        'COALESCE(u.user_id, -i.invitation_id) AS user_id',
+        'i.invitee_email AS email',
+        "COALESCE(u.display_name, SPLIT_PART(i.invitee_email, '@', 1)) AS display_name",
+        'u.avatar_url AS avatar_url',
+        'r.role_name AS role_name',
+        'i.created_at AS joined_at',
+        'i.invitation_id AS invitation_id',
+        'i.status AS invitation_status',
+        'i.invitee_user_id AS invitee_user_id',
+      ])
+      .getRawMany<{
+        user_id: number;
+        email: string;
+        display_name: string;
+        avatar_url: string | null;
+        role_name: string;
+        joined_at: Date;
+        invitation_id: number;
+        invitation_status: string;
+        invitee_user_id: number | null;
+      }>();
+
+    const pendingRows = pending
+      .filter((p) => {
+        // Exclude pending invitations for users already joined
+        if (p.invitee_user_id && joinedUserIds.has(p.invitee_user_id)) return false;
+        if (!p.invitee_user_id && joinedEmails.has(p.email.toLowerCase())) return false;
+        return true;
+      })
+      .map(({ invitee_user_id, ...rest }) => {
+        void invitee_user_id;
+        return {
+          ...rest,
+          membership_status: 'pending' as const,
+        };
+      });
+
+    return [...joinedRows, ...pendingRows].sort(
+      (a, b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime(),
     );
-    return rows;
   }
 
-  async addMember(projectId: number, requesterId: number, userEmail: string, roleName: string) {
-    const requester = await this.rolePolicy.assertProjectCollaboratorManage(projectId, requesterId);
+  async addMember(
+    projectId: number,
+    requesterId: number,
+    userEmail: string,
+    roleName: string,
+  ) {
+    const requester = await this.rolePolicy.assertProjectCollaboratorManage(
+      projectId,
+      requesterId,
+    );
     const requesterIsProjectAuthor = requester.owner_user_id === requesterId;
 
-    const userResult = await this.db.query(
-      'SELECT user_id FROM users WHERE email = $1',
-      [userEmail],
-    );
-    if (userResult.rows.length === 0) throw new NotFoundException('User not found');
-    const targetUserId = userResult.rows[0].user_id;
+    const user = await this.usersRepo.findOne({
+      where: { email: userEmail },
+      select: { user_id: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
 
-    const roleResult = await this.getRoleByName(roleName);
+    const role = await this.getRoleByName(roleName);
 
-    if (!requesterIsProjectAuthor && this.rolePolicy.isPrivilegedRole(roleResult.role_name)) {
+    if (!requesterIsProjectAuthor && this.rolePolicy.isPrivilegedRole(role.role_name)) {
       throw new ForbiddenException('Only project owner can assign privileged roles');
     }
 
     try {
-      const { rows } = await this.db.query(
-        `INSERT INTO project_members (project_id, user_id, role_id)
-         VALUES ($1, $2, $3) RETURNING *`,
-        [projectId, targetUserId, roleResult.role_id],
-      );
-      return rows[0];
+      const entity = this.membersRepo.create({
+        project_id: projectId,
+        user_id: user.user_id,
+        role_id: role.role_id,
+      });
+      return await this.membersRepo.save(entity);
     } catch (err: unknown) {
-      if ((err as { code?: string }).code === '23505') {
+      if ((err as { code?: string }).code === PG_UNIQUE_VIOLATION) {
         throw new ConflictException('User is already a member');
       }
       throw err;
     }
   }
 
-  async updateMemberRole(projectId: number, requesterId: number, targetUserId: number, roleName: string) {
-    const requester = await this.rolePolicy.assertProjectCollaboratorManage(projectId, requesterId);
+  async updateMemberRole(
+    projectId: number,
+    requesterId: number,
+    targetUserId: number,
+    roleName: string,
+  ) {
+    const requester = await this.rolePolicy.assertProjectCollaboratorManage(
+      projectId,
+      requesterId,
+    );
     const requesterIsProjectAuthor = requester.owner_user_id === requesterId;
     const targetMember = await this.getMemberRole(projectId, targetUserId);
-    const roleResult = await this.getRoleByName(roleName);
+    const role = await this.getRoleByName(roleName);
 
-    // Prevent any user from changing their own role
     if (targetUserId === requesterId) {
       throw new ForbiddenException('Cannot change your own role');
     }
@@ -234,44 +291,47 @@ export class ProjectsService {
       if (this.rolePolicy.isPrivilegedRole(targetMember.role_name)) {
         throw new ForbiddenException('Only project owner can change privileged roles');
       }
-      if (this.rolePolicy.isPrivilegedRole(roleResult.role_name)) {
+      if (this.rolePolicy.isPrivilegedRole(role.role_name)) {
         throw new ForbiddenException('Only project owner can assign privileged roles');
       }
     }
 
-    const { rows } = await this.db.query(
-      `UPDATE project_members SET role_id = $1
-       WHERE project_id = $2 AND user_id = $3 RETURNING *`,
-      [roleResult.role_id, projectId, targetUserId],
+    const result = await this.membersRepo.update(
+      { project_id: projectId, user_id: targetUserId },
+      { role_id: role.role_id },
     );
-    if (rows.length === 0) throw new NotFoundException('Member not found');
+    if (!result.affected) throw new NotFoundException('Member not found');
+
+    const updated = await this.membersRepo.findOne({
+      where: { project_id: projectId, user_id: targetUserId },
+    });
+
     this.realtimeEvents.emitToProject(projectId, 'member.role.changed', {
       project_id: projectId,
       user_id: targetUserId,
-      new_role: roleResult.role_name,
+      new_role: role.role_name,
     });
     this.realtimeEvents.emitToUser(targetUserId, 'member.role.changed', {
       project_id: projectId,
       user_id: targetUserId,
-      new_role: roleResult.role_name,
+      new_role: role.role_name,
     });
-    return rows[0];
+    return updated;
   }
 
   async leaveProject(projectId: number, userId: number) {
-    const { rows: projectRows } = await this.db.query(
-      'SELECT owner_user_id FROM projects WHERE project_id = $1',
-      [projectId],
-    );
-    if (projectRows.length === 0) throw new NotFoundException('Project not found');
-    if (projectRows[0].owner_user_id === userId) {
+    const project = await this.projectsRepo.findOne({
+      where: { project_id: projectId },
+      select: { owner_user_id: true },
+    });
+    if (!project) throw new NotFoundException('Project not found');
+    if (project.owner_user_id === userId) {
       throw new ForbiddenException('Project owner cannot leave their own project');
     }
-    const { rows } = await this.db.query(
-      'DELETE FROM project_members WHERE project_id = $1 AND user_id = $2 RETURNING *',
-      [projectId, userId],
-    );
-    if (rows.length === 0) throw new NotFoundException('Not a member of this project');
+
+    const result = await this.membersRepo.delete({ project_id: projectId, user_id: userId });
+    if (!result.affected) throw new NotFoundException('Not a member of this project');
+
     this.realtimeEvents.emitToProject(projectId, 'member.left', {
       project_id: projectId,
       user_id: userId,
@@ -279,24 +339,30 @@ export class ProjectsService {
   }
 
   async removeMember(projectId: number, requesterId: number, targetUserId: number) {
-    const requester = await this.rolePolicy.assertProjectCollaboratorManage(projectId, requesterId);
+    const requester = await this.rolePolicy.assertProjectCollaboratorManage(
+      projectId,
+      requesterId,
+    );
     const requesterIsProjectAuthor = requester.owner_user_id === requesterId;
     const targetMember = await this.getMemberRole(projectId, targetUserId);
 
-    // The project owner can never be removed — not even by themselves
     if (targetUserId === requester.owner_user_id) {
       throw new ForbiddenException('Cannot remove the project owner');
     }
 
-    if (!requesterIsProjectAuthor && this.rolePolicy.isPrivilegedRole(targetMember.role_name)) {
+    if (
+      !requesterIsProjectAuthor &&
+      this.rolePolicy.isPrivilegedRole(targetMember.role_name)
+    ) {
       throw new ForbiddenException('Only project owner can remove privileged roles');
     }
 
-    const { rows } = await this.db.query(
-      'DELETE FROM project_members WHERE project_id = $1 AND user_id = $2 RETURNING *',
-      [projectId, targetUserId],
-    );
-    if (rows.length === 0) throw new NotFoundException('Member not found');
+    const result = await this.membersRepo.delete({
+      project_id: projectId,
+      user_id: targetUserId,
+    });
+    if (!result.affected) throw new NotFoundException('Member not found');
+
     this.realtimeEvents.emitToProject(projectId, 'member.removed', {
       project_id: projectId,
       user_id: targetUserId,

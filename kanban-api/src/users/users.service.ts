@@ -1,117 +1,145 @@
 import {
-  BadRequestException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { ILike, Not, Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import * as bcrypt from 'bcrypt';
-import { DatabaseService } from '../database/database.service';
-import { NotificationsService } from '../notifications/notifications.service';
+import { User } from '../entities';
 
-const SAFE_FIELDS = `user_id, email, display_name, avatar_url, bio, theme, timezone, language,
-  job_title, location, website_url, notification_settings, created_at, updated_at`;
+const SAFE_FIELDS: (keyof User)[] = [
+  'user_id',
+  'email',
+  'display_name',
+  'avatar_url',
+  'bio',
+  'theme',
+  'timezone',
+  'language',
+  'job_title',
+  'location',
+  'website_url',
+  'notification_settings',
+  'created_at',
+  'updated_at',
+];
+
+const PUBLIC_FIELDS: (keyof User)[] = [
+  'user_id',
+  'email',
+  'display_name',
+  'avatar_url',
+  'bio',
+  'job_title',
+  'location',
+  'website_url',
+  'created_at',
+];
+
+const ALLOWED_UPDATE_FIELDS = new Set<keyof User>([
+  'display_name',
+  'avatar_url',
+  'bio',
+  'theme',
+  'timezone',
+  'language',
+  'job_title',
+  'location',
+  'website_url',
+  'notification_settings',
+]);
 
 @Injectable()
 export class UsersService {
   constructor(
-    private db: DatabaseService,
-    private config: ConfigService,
-    private readonly notificationsService: NotificationsService,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
+    private readonly config: ConfigService,
   ) {}
 
   async getProfile(userId: number) {
-    const { rows } = await this.db.query(
-      `SELECT ${SAFE_FIELDS} FROM users WHERE user_id = $1`,
-      [userId],
+    return (
+      (await this.usersRepo.findOne({
+        where: { user_id: userId },
+        select: SAFE_FIELDS.reduce<Record<string, true>>((acc, k) => {
+          acc[k] = true;
+          return acc;
+        }, {}),
+      })) || null
     );
-    return rows[0] || null;
   }
 
   async searchUsersByEmail(currentUserId: number, email: string) {
     const normalized = email.trim().toLowerCase();
     if (!normalized) return [];
-
-    const { rows } = await this.db.query(
-      `SELECT user_id, email, display_name, avatar_url
-       FROM users
-       WHERE user_id != $1 AND email ILIKE $2
-       ORDER BY email ASC
-       LIMIT 10`,
-      [currentUserId, `%${normalized}%`],
-    );
-
-    return rows;
+    return this.usersRepo.find({
+      where: {
+        user_id: Not(currentUserId),
+        email: ILike(`%${normalized}%`),
+      },
+      select: { user_id: true, email: true, display_name: true, avatar_url: true },
+      order: { email: 'ASC' },
+      take: 10,
+    });
   }
 
   async getPublicProfile(userId: number) {
-    const { rows } = await this.db.query(
-      `SELECT user_id, email, display_name, avatar_url, bio, job_title, location, website_url, created_at
-       FROM users WHERE user_id = $1`,
-      [userId],
-    );
-    if (!rows[0]) throw new NotFoundException('User not found');
-    return rows[0];
+    const user = await this.usersRepo.findOne({
+      where: { user_id: userId },
+      select: PUBLIC_FIELDS.reduce<Record<string, true>>((acc, k) => {
+        acc[k] = true;
+        return acc;
+      }, {}),
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user;
   }
 
   async updateProfile(userId: number, updates: Record<string, unknown>) {
-    const allowed = [
-      'display_name', 'avatar_url', 'bio', 'theme', 'timezone', 'language',
-      'job_title', 'location', 'website_url', 'notification_settings',
-    ];
-
-    const fields: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    for (const key of allowed) {
-      if (key in updates) {
-        fields.push(`${key} = $${idx}`);
-        values.push(updates[key]);
-        idx++;
+    const filteredUpdates: Partial<User> = {};
+    for (const [k, v] of Object.entries(updates)) {
+      if (ALLOWED_UPDATE_FIELDS.has(k as keyof User)) {
+        (filteredUpdates as Record<string, unknown>)[k] = v;
       }
     }
-
-    if (fields.length === 0) return this.getProfile(userId);
-
-    fields.push(`updated_at = NOW()`);
-    values.push(userId);
-
-    const { rows } = await this.db.query(
-      `UPDATE users SET ${fields.join(', ')} WHERE user_id = $${idx} RETURNING ${SAFE_FIELDS}`,
-      values,
+    if (Object.keys(filteredUpdates).length === 0) {
+      return this.getProfile(userId);
+    }
+    await this.usersRepo.update(
+      { user_id: userId },
+      filteredUpdates as QueryDeepPartialEntity<User>,
     );
-    return rows[0];
+    return this.getProfile(userId);
   }
 
   async changePassword(userId: number, currentPassword: string, newPassword: string) {
-    const { rows } = await this.db.query(
-      'SELECT password FROM users WHERE user_id = $1',
-      [userId],
-    );
-    if (rows.length === 0) throw new NotFoundException('User not found');
+    const user = await this.usersRepo.findOne({
+      where: { user_id: userId },
+      select: { password: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
 
-    const valid = await bcrypt.compare(currentPassword, rows[0].password);
+    const valid = await bcrypt.compare(currentPassword, user.password);
     if (!valid) throw new UnauthorizedException('Current password is incorrect');
 
     const rounds = parseInt(String(this.config.get('BCRYPT_ROUNDS', '12')), 10);
     const newHash = await bcrypt.hash(newPassword, rounds);
-    await this.db.query(
-      'UPDATE users SET password = $1, updated_at = NOW() WHERE user_id = $2',
-      [newHash, userId],
-    );
+    await this.usersRepo.update({ user_id: userId }, { password: newHash });
   }
 
   async deleteAccount(userId: number, password: string) {
-    const { rows } = await this.db.query(
-      'SELECT password FROM users WHERE user_id = $1',
-      [userId],
-    );
-    if (rows.length === 0) throw new NotFoundException('User not found');
+    const user = await this.usersRepo.findOne({
+      where: { user_id: userId },
+      select: { password: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
 
-    const valid = await bcrypt.compare(password, rows[0].password);
+    const valid = await bcrypt.compare(password, user.password);
     if (!valid) throw new UnauthorizedException('Password confirmation failed');
 
-    await this.db.query('DELETE FROM users WHERE user_id = $1', [userId]);
+    await this.usersRepo.delete({ user_id: userId });
   }
 }

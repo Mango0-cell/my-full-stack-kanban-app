@@ -3,28 +3,30 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
+import {
+  BoardColumn,
+  CanceledCard,
+  CanceledColumnGroup,
+  Card,
+  CardActivity,
+} from '../entities';
 import { RolePolicyService } from '../common/policies/role-policy.service';
 import { RealtimeEventsService } from '../realtime/realtime-events.service';
-
-interface CanceledGroupRow {
-  canceled_group_id: number;
-  column_name: string;
-  canceled_at: string;
-  canceled_card_id: number | null;
-  title: string | null;
-  description: string | null;
-  due_date: string | null;
-  priority: string | null;
-  assigned_user_id: number | null;
-  original_column_name: string | null;
-  card_canceled_at: string | null;
-}
 
 @Injectable()
 export class CanceledService {
   constructor(
-    private readonly db: DatabaseService,
+    @InjectRepository(CanceledCard)
+    private readonly canceledCardsRepo: Repository<CanceledCard>,
+    @InjectRepository(CanceledColumnGroup)
+    private readonly canceledGroupsRepo: Repository<CanceledColumnGroup>,
+    @InjectRepository(Card)
+    private readonly cardsRepo: Repository<Card>,
+    @InjectRepository(BoardColumn)
+    private readonly columnsRepo: Repository<BoardColumn>,
+    private readonly dataSource: DataSource,
     private readonly rolePolicy: RolePolicyService,
     private readonly realtimeEvents: RealtimeEventsService,
   ) {}
@@ -32,283 +34,162 @@ export class CanceledService {
   async listProjectCanceled(projectId: number, userId: number) {
     await this.rolePolicy.assertProjectReadable(projectId, userId);
 
-    const { rows: groupRows } = await this.db.query(
-      `SELECT
-         g.canceled_group_id,
-         g.column_name,
-         g.canceled_at,
-         c.canceled_card_id,
-         c.title,
-         c.description,
-         c.due_date,
-         c.priority,
-         c.assigned_user_id,
-         c.original_column_name,
-         c.canceled_at AS card_canceled_at
-       FROM canceled_column_groups g
-       LEFT JOIN canceled_cards c ON c.canceled_group_id = g.canceled_group_id
-       WHERE g.project_id = $1
-       ORDER BY g.canceled_at DESC, c.canceled_card_id ASC`,
-      [projectId],
-    );
+    const groups = await this.canceledGroupsRepo
+      .createQueryBuilder('g')
+      .leftJoinAndSelect('g.cards', 'c')
+      .where('g.project_id = :projectId', { projectId })
+      .orderBy('g.canceled_at', 'DESC')
+      .addOrderBy('c.canceled_card_id', 'ASC')
+      .getMany();
 
-    const grouped = new Map<number, {
-      canceled_group_id: number;
-      column_name: string;
-      canceled_at: string;
-      cards: Array<{
-        canceled_card_id: number;
-        title: string;
-        description: string | null;
-        due_date: string | null;
-        priority: string;
-        assigned_user_id: number | null;
-        original_column_name: string;
-        canceled_at: string;
-      }>;
-    }>();
+    const entries = groups.map((g) => ({
+      canceled_group_id: g.canceled_group_id,
+      column_name: g.column_name,
+      canceled_at: g.canceled_at,
+      cards: (g.cards ?? []).map((c) => ({
+        canceled_card_id: c.canceled_card_id,
+        title: c.title,
+        description: c.description,
+        due_date: c.due_date,
+        priority: c.priority,
+        assigned_user_id: c.assigned_user_id,
+        original_column_name: c.original_column_name ?? g.column_name,
+        canceled_at: c.canceled_at,
+      })),
+    }));
 
-    for (const row of groupRows as CanceledGroupRow[]) {
-      if (!grouped.has(row.canceled_group_id)) {
-        grouped.set(row.canceled_group_id, {
-          canceled_group_id: row.canceled_group_id,
-          column_name: row.column_name,
-          canceled_at: row.canceled_at,
-          cards: [],
-        });
-      }
-      if (row.canceled_card_id) {
-        grouped.get(row.canceled_group_id)!.cards.push({
-          canceled_card_id: row.canceled_card_id,
-          title: row.title ?? '',
-          description: row.description,
-          due_date: row.due_date,
-          priority: row.priority ?? 'medium',
-          assigned_user_id: row.assigned_user_id,
-          original_column_name: row.original_column_name ?? row.column_name,
-          canceled_at: row.card_canceled_at ?? row.canceled_at,
-        });
-      }
-    }
+    const orphan_cards = await this.canceledCardsRepo.find({
+      where: { project_id: projectId, canceled_group_id: IsNull() },
+      order: { canceled_at: 'DESC', canceled_card_id: 'DESC' },
+      select: {
+        canceled_card_id: true,
+        title: true,
+        description: true,
+        due_date: true,
+        priority: true,
+        assigned_user_id: true,
+        original_column_name: true,
+        canceled_at: true,
+      },
+    });
 
-    const { rows: orphanRows } = await this.db.query(
-      `SELECT
-         canceled_card_id,
-         title,
-         description,
-         due_date,
-         priority,
-         assigned_user_id,
-         original_column_name,
-         canceled_at
-       FROM canceled_cards
-       WHERE project_id = $1 AND canceled_group_id IS NULL
-       ORDER BY canceled_at DESC, canceled_card_id DESC`,
-      [projectId],
-    );
-
-    return {
-      entries: Array.from(grouped.values()),
-      orphan_cards: orphanRows,
-    };
+    return { entries, orphan_cards };
   }
 
   async cancelCard(projectId: number, cardId: number, userId: number) {
     await this.rolePolicy.assertProjectBoardWrite(projectId, userId);
 
-    const { rows: cardRows } = await this.db.query(
-      `SELECT
-         c.card_id,
-         c.column_id,
-         c.created_by_user_id,
-         c.assigned_user_id,
-         c.title,
-         c.description,
-         c.due_date,
-         c.priority,
-         col.project_id,
-         col.name AS column_name
-       FROM cards c
-       JOIN columns col ON col.column_id = c.column_id
-       WHERE c.card_id = $1`,
-      [cardId],
-    );
+    const card = await this.cardsRepo
+      .createQueryBuilder('c')
+      .innerJoinAndSelect('c.column', 'col')
+      .where('c.card_id = :cardId', { cardId })
+      .getOne();
 
-    if (cardRows.length === 0) {
-      throw new NotFoundException('Card not found');
-    }
-
-    const card = cardRows[0];
-    if (card.project_id !== projectId) {
+    if (!card) throw new NotFoundException('Card not found');
+    if (card.column.project_id !== projectId) {
       throw new NotFoundException('Card not found in this project');
     }
 
-    const client = await this.db.getClient();
-    try {
-      await client.query('BEGIN');
-
-      const { rows: canceledRows } = await client.query(
-        `INSERT INTO canceled_cards (
-           project_id,
-           canceled_group_id,
-           created_by_user_id,
-           assigned_user_id,
-           title,
-           description,
-           due_date,
-           priority,
-           original_column_name,
-           canceled_by_user_id
-         ) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *`,
-        [
-          projectId,
-          card.created_by_user_id,
-          card.assigned_user_id,
-          card.title,
-          card.description,
-          card.due_date,
-          card.priority ?? 'medium',
-          card.column_name,
-          userId,
-        ],
-      );
-
-      await client.query(
-        `INSERT INTO card_activity (card_id, user_id, action_type, old_value, new_value)
-         VALUES ($1, $2, 'canceled', $3, NULL)`,
-        [cardId, userId, card.title],
-      );
-
-      await client.query('DELETE FROM cards WHERE card_id = $1', [cardId]);
-
-      await client.query('COMMIT');
-
-      this.realtimeEvents.emitToProject(projectId, 'board.card.deleted', {
+    const canceledCard = await this.dataSource.transaction(async (manager) => {
+      const cc = manager.create(CanceledCard, {
         project_id: projectId,
+        canceled_group_id: null,
+        created_by_user_id: card.created_by_user_id,
+        assigned_user_id: card.assigned_user_id,
+        title: card.title,
+        description: card.description,
+        due_date: card.due_date,
+        priority: card.priority ?? 'medium',
+        original_column_name: card.column.name,
+        canceled_by_user_id: userId,
+      });
+      const saved = await manager.save(cc);
+
+      const activity = manager.create(CardActivity, {
         card_id: cardId,
+        user_id: userId,
+        action_type: 'canceled',
+        old_value: card.title,
+        new_value: null,
       });
-      this.realtimeEvents.emitToProject(projectId, 'board.canceled.card.canceled', {
-        project_id: projectId,
-        card_id: cardId,
-        canceled_card_id: canceledRows[0].canceled_card_id,
-      });
-      this.realtimeEvents.emitToProject(projectId, 'board.canceled.updated', {
-        project_id: projectId,
-      });
+      await manager.save(activity);
 
-      return canceledRows[0];
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+      await manager.delete(Card, { card_id: cardId });
+      return saved;
+    });
+
+    this.realtimeEvents.emitToProject(projectId, 'board.card.deleted', {
+      project_id: projectId,
+      card_id: cardId,
+    });
+    this.realtimeEvents.emitToProject(projectId, 'board.canceled.card.canceled', {
+      project_id: projectId,
+      card_id: cardId,
+      canceled_card_id: canceledCard.canceled_card_id,
+    });
+    this.realtimeEvents.emitToProject(projectId, 'board.canceled.updated', {
+      project_id: projectId,
+    });
+
+    return canceledCard;
   }
 
   async cancelColumn(projectId: number, columnId: number, userId: number) {
     await this.rolePolicy.assertProjectBoardWrite(projectId, userId);
 
-    const { rows: columnRows } = await this.db.query(
-      `SELECT column_id, project_id, name
-       FROM columns
-       WHERE column_id = $1 AND project_id = $2`,
-      [columnId, projectId],
-    );
+    const column = await this.columnsRepo.findOne({
+      where: { column_id: columnId, project_id: projectId },
+    });
+    if (!column) throw new NotFoundException('Column not found');
 
-    if (columnRows.length === 0) {
-      throw new NotFoundException('Column not found');
-    }
+    const cards = await this.cardsRepo.find({
+      where: { column_id: columnId },
+      order: { position: 'ASC', card_id: 'ASC' },
+    });
 
-    const column = columnRows[0];
-
-    const { rows: cards } = await this.db.query(
-      `SELECT
-         card_id,
-         created_by_user_id,
-         assigned_user_id,
-         title,
-         description,
-         due_date,
-         priority
-       FROM cards
-       WHERE column_id = $1
-       ORDER BY position, card_id`,
-      [columnId],
-    );
-
-    const client = await this.db.getClient();
-    try {
-      await client.query('BEGIN');
-
-      const { rows: groupRows } = await client.query(
-        `INSERT INTO canceled_column_groups (project_id, column_name, canceled_by_user_id)
-         VALUES ($1, $2, $3)
-         RETURNING canceled_group_id, project_id, column_name, canceled_at`,
-        [projectId, column.name, userId],
-      );
-      const group = groupRows[0];
+    const group = await this.dataSource.transaction(async (manager) => {
+      const groupEntity = manager.create(CanceledColumnGroup, {
+        project_id: projectId,
+        column_name: column.name,
+        canceled_by_user_id: userId,
+      });
+      const savedGroup = await manager.save(groupEntity);
 
       for (const card of cards) {
-        await client.query(
-          `INSERT INTO canceled_cards (
-             project_id,
-             canceled_group_id,
-             created_by_user_id,
-             assigned_user_id,
-             title,
-             description,
-             due_date,
-             priority,
-             original_column_name,
-             canceled_by_user_id
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [
-            projectId,
-            group.canceled_group_id,
-            card.created_by_user_id,
-            card.assigned_user_id,
-            card.title,
-            card.description,
-            card.due_date,
-            card.priority ?? 'medium',
-            column.name,
-            userId,
-          ],
-        );
+        const cc = manager.create(CanceledCard, {
+          project_id: projectId,
+          canceled_group_id: savedGroup.canceled_group_id,
+          created_by_user_id: card.created_by_user_id,
+          assigned_user_id: card.assigned_user_id,
+          title: card.title,
+          description: card.description,
+          due_date: card.due_date,
+          priority: card.priority ?? 'medium',
+          original_column_name: column.name,
+          canceled_by_user_id: userId,
+        });
+        await manager.save(cc);
       }
 
-      await client.query('DELETE FROM columns WHERE column_id = $1 AND project_id = $2', [
-        columnId,
-        projectId,
-      ]);
+      await manager.delete(BoardColumn, { column_id: columnId, project_id: projectId });
+      return savedGroup;
+    });
 
-      await client.query('COMMIT');
+    this.realtimeEvents.emitToProject(projectId, 'board.column.deleted', {
+      project_id: projectId,
+      column_id: columnId,
+    });
+    this.realtimeEvents.emitToProject(projectId, 'board.canceled.column.canceled', {
+      project_id: projectId,
+      column_id: columnId,
+      canceled_group_id: group.canceled_group_id,
+      cards_count: cards.length,
+    });
+    this.realtimeEvents.emitToProject(projectId, 'board.canceled.updated', {
+      project_id: projectId,
+    });
 
-      this.realtimeEvents.emitToProject(projectId, 'board.column.deleted', {
-        project_id: projectId,
-        column_id: columnId,
-      });
-      this.realtimeEvents.emitToProject(projectId, 'board.canceled.column.canceled', {
-        project_id: projectId,
-        column_id: columnId,
-        canceled_group_id: group.canceled_group_id,
-        cards_count: cards.length,
-      });
-      this.realtimeEvents.emitToProject(projectId, 'board.canceled.updated', {
-        project_id: projectId,
-      });
-
-      return {
-        ...group,
-        cards_count: cards.length,
-      };
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+    return { ...group, cards_count: cards.length };
   }
 
   async unarchiveCard(
@@ -319,169 +200,130 @@ export class CanceledService {
   ) {
     await this.rolePolicy.assertProjectBoardWrite(projectId, userId);
 
-    const { rows: targetColumnRows } = await this.db.query(
-      'SELECT project_id FROM columns WHERE column_id = $1',
-      [targetColumnId],
-    );
-
-    if (targetColumnRows.length === 0 || targetColumnRows[0].project_id !== projectId) {
+    const targetColumn = await this.columnsRepo.findOne({
+      where: { column_id: targetColumnId },
+      select: { project_id: true },
+    });
+    if (!targetColumn || targetColumn.project_id !== projectId) {
       throw new ForbiddenException('Target column does not belong to this project');
     }
 
-    const client = await this.db.getClient();
-    try {
-      await client.query('BEGIN');
+    const card = await this.dataSource.transaction(async (manager) => {
+      const canceledCard = await manager
+        .createQueryBuilder(CanceledCard, 'cc')
+        .where('cc.canceled_card_id = :id AND cc.project_id = :projectId', {
+          id: canceledCardId,
+          projectId,
+        })
+        .setLock('pessimistic_write')
+        .getOne();
 
-      const { rows: canceledRows } = await client.query(
-        `SELECT *
-         FROM canceled_cards
-         WHERE canceled_card_id = $1 AND project_id = $2
-         FOR UPDATE`,
-        [canceledCardId, projectId],
-      );
+      if (!canceledCard) throw new NotFoundException('Canceled card not found');
 
-      if (canceledRows.length === 0) {
-        throw new NotFoundException('Canceled card not found');
-      }
+      const posRow = await manager
+        .createQueryBuilder(Card, 'c')
+        .select('COALESCE(MAX(c.position), -1) + 1', 'next_pos')
+        .where('c.column_id = :col', { col: targetColumnId })
+        .getRawOne<{ next_pos: string | number }>();
+      const nextPos = Number(posRow?.next_pos ?? 0);
 
-      const canceledCard = canceledRows[0];
+      const newCard = manager.create(Card, {
+        column_id: targetColumnId,
+        created_by_user_id: canceledCard.created_by_user_id,
+        assigned_user_id: canceledCard.assigned_user_id,
+        title: canceledCard.title,
+        description: canceledCard.description,
+        due_date: canceledCard.due_date,
+        priority: canceledCard.priority,
+        position: nextPos,
+      });
+      const savedCard = await manager.save(newCard);
 
-      const { rows: posRows } = await client.query(
-        'SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM cards WHERE column_id = $1',
-        [targetColumnId],
-      );
-      const nextPos = Number(posRows[0].next_pos) || 0;
-
-      const { rows: cardRows } = await client.query(
-        `INSERT INTO cards (
-           column_id,
-           created_by_user_id,
-           assigned_user_id,
-           title,
-           description,
-           due_date,
-           priority,
-           position
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING *`,
-        [
-          targetColumnId,
-          canceledCard.created_by_user_id,
-          canceledCard.assigned_user_id,
-          canceledCard.title,
-          canceledCard.description,
-          canceledCard.due_date,
-          canceledCard.priority,
-          nextPos,
-        ],
-      );
-
-      await client.query(
-        `DELETE FROM canceled_cards
-         WHERE canceled_card_id = $1 AND project_id = $2`,
-        [canceledCardId, projectId],
-      );
+      await manager.delete(CanceledCard, {
+        canceled_card_id: canceledCardId,
+        project_id: projectId,
+      });
 
       if (canceledCard.canceled_group_id) {
-        const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS remaining FROM canceled_cards WHERE canceled_group_id = $1',
-          [canceledCard.canceled_group_id],
-        );
-        if (countRows[0].remaining === 0) {
-          await client.query(
-            'DELETE FROM canceled_column_groups WHERE canceled_group_id = $1 AND project_id = $2',
-            [canceledCard.canceled_group_id, projectId],
-          );
+        const remaining = await manager.count(CanceledCard, {
+          where: { canceled_group_id: canceledCard.canceled_group_id },
+        });
+        if (remaining === 0) {
+          await manager.delete(CanceledColumnGroup, {
+            canceled_group_id: canceledCard.canceled_group_id,
+            project_id: projectId,
+          });
         }
       }
 
-      await client.query('COMMIT');
+      return savedCard;
+    });
 
-      const card = cardRows[0];
-      this.realtimeEvents.emitToProject(projectId, 'board.card.created', {
-        project_id: projectId,
-        card,
-      });
-      this.realtimeEvents.emitToProject(projectId, 'board.canceled.card.unarchived', {
-        project_id: projectId,
-        canceled_card_id: canceledCardId,
-        card_id: card.card_id,
-      });
-      this.realtimeEvents.emitToProject(projectId, 'board.canceled.updated', {
-        project_id: projectId,
-      });
+    this.realtimeEvents.emitToProject(projectId, 'board.card.created', {
+      project_id: projectId,
+      card,
+    });
+    this.realtimeEvents.emitToProject(projectId, 'board.canceled.card.unarchived', {
+      project_id: projectId,
+      canceled_card_id: canceledCardId,
+      card_id: card.card_id,
+    });
+    this.realtimeEvents.emitToProject(projectId, 'board.canceled.updated', {
+      project_id: projectId,
+    });
 
-      return card;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+    return card;
   }
 
   async deleteCanceledCard(projectId: number, canceledCardId: number, userId: number) {
+    // Viewers are read-only — they may see the canceled list but cannot
+    // mutate it. Owner / admin / editor / member can delete entries.
     await this.rolePolicy.assertProjectBoardWrite(projectId, userId);
 
-    const client = await this.db.getClient();
-    try {
-      await client.query('BEGIN');
+    await this.dataSource.transaction(async (manager) => {
+      const existing = await manager.findOne(CanceledCard, {
+        where: { canceled_card_id: canceledCardId, project_id: projectId },
+        // Include PK in select so TypeORM hydrates the row reliably.
+        select: { canceled_card_id: true, canceled_group_id: true },
+      });
+      if (!existing) throw new NotFoundException('Canceled card not found');
 
-      const { rows } = await client.query(
-        `DELETE FROM canceled_cards
-         WHERE canceled_card_id = $1 AND project_id = $2
-         RETURNING canceled_group_id`,
-        [canceledCardId, projectId],
-      );
+      await manager.delete(CanceledCard, {
+        canceled_card_id: canceledCardId,
+        project_id: projectId,
+      });
 
-      if (rows.length === 0) {
-        throw new NotFoundException('Canceled card not found');
-      }
-
-      const canceledGroupId = rows[0].canceled_group_id as number | null;
-      if (canceledGroupId) {
-        const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS remaining FROM canceled_cards WHERE canceled_group_id = $1',
-          [canceledGroupId],
-        );
-        if (countRows[0].remaining === 0) {
-          await client.query(
-            'DELETE FROM canceled_column_groups WHERE canceled_group_id = $1 AND project_id = $2',
-            [canceledGroupId, projectId],
-          );
+      if (existing.canceled_group_id) {
+        const remaining = await manager.count(CanceledCard, {
+          where: { canceled_group_id: existing.canceled_group_id },
+        });
+        if (remaining === 0) {
+          await manager.delete(CanceledColumnGroup, {
+            canceled_group_id: existing.canceled_group_id,
+            project_id: projectId,
+          });
         }
       }
+    });
 
-      await client.query('COMMIT');
-
-      this.realtimeEvents.emitToProject(projectId, 'board.canceled.card.deleted', {
-        project_id: projectId,
-        canceled_card_id: canceledCardId,
-      });
-      this.realtimeEvents.emitToProject(projectId, 'board.canceled.updated', {
-        project_id: projectId,
-      });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+    this.realtimeEvents.emitToProject(projectId, 'board.canceled.card.deleted', {
+      project_id: projectId,
+      canceled_card_id: canceledCardId,
+    });
+    this.realtimeEvents.emitToProject(projectId, 'board.canceled.updated', {
+      project_id: projectId,
+    });
   }
 
   async deleteCanceledGroup(projectId: number, canceledGroupId: number, userId: number) {
+    // Viewers are read-only — same policy as deleteCanceledCard.
     await this.rolePolicy.assertProjectBoardWrite(projectId, userId);
 
-    const { rows } = await this.db.query(
-      `DELETE FROM canceled_column_groups
-       WHERE canceled_group_id = $1 AND project_id = $2
-       RETURNING canceled_group_id`,
-      [canceledGroupId, projectId],
-    );
-
-    if (rows.length === 0) {
-      throw new NotFoundException('Canceled column group not found');
-    }
+    const result = await this.canceledGroupsRepo.delete({
+      canceled_group_id: canceledGroupId,
+      project_id: projectId,
+    });
+    if (!result.affected) throw new NotFoundException('Canceled column group not found');
 
     this.realtimeEvents.emitToProject(projectId, 'board.canceled.group.deleted', {
       project_id: projectId,

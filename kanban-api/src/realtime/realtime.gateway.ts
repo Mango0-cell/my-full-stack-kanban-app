@@ -11,11 +11,13 @@ import {
 } from '@nestjs/websockets';
 import { Inject, Logger, UseGuards, forwardRef } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import { InjectRepository } from '@nestjs/typeorm';
 import { Server, Socket } from 'socket.io';
+import { Repository } from 'typeorm';
 import { RealtimeAuthService, SocketJwtPayload } from './realtime-auth.service';
 import { RealtimeEventsService } from './realtime-events.service';
 import { ProjectAccessService } from '../projects/project-access.service';
-import { DatabaseService } from '../database/database.service';
+import { DirectConversation, ProjectMember } from '../entities';
 import { WsAuthGuard } from '../common/guards/ws-auth.guard';
 
 interface SocketWithUser extends Socket {
@@ -28,7 +30,6 @@ interface SocketWithUser extends Socket {
   transports: ['websocket', 'polling'],
   cors: {
     origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
-      // Allow server-to-server (no origin) and configured origins
       if (!origin) return cb(null, true);
       const env = process.env.CORS_ORIGINS || '';
       const allowed = env
@@ -44,7 +45,9 @@ interface SocketWithUser extends Socket {
     credentials: true,
   },
 })
-export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+export class RealtimeGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server!: Server;
 
@@ -55,7 +58,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly realtimeEvents: RealtimeEventsService,
     @Inject(forwardRef(() => ProjectAccessService))
     private readonly projectAccess: ProjectAccessService,
-    private readonly db: DatabaseService,
+    @InjectRepository(ProjectMember)
+    private readonly membersRepo: Repository<ProjectMember>,
+    @InjectRepository(DirectConversation)
+    private readonly conversationsRepo: Repository<DirectConversation>,
   ) {}
 
   afterInit() {
@@ -65,33 +71,30 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   async handleConnection(client: SocketWithUser) {
     const hasAuthToken = !!client.handshake.auth?.token;
     const hasHeader = !!client.handshake.headers.authorization;
-    this.logger.log(`Socket handshake (${client.id}): auth.token=${hasAuthToken}, header=${hasHeader}`);
+    this.logger.log(
+      `Socket handshake (${client.id}): auth.token=${hasAuthToken}, header=${hasHeader}`,
+    );
 
     try {
       const user = this.realtimeAuth.authenticate(client);
       client.data.user = user;
 
-      // Join personal user room
       const userRoom = this.realtimeEvents.userRoom(user.userId);
       client.join(userRoom);
 
-      // Auto-join ALL project rooms for board realtime events
-      const { rows: projects } = await this.db.query(
-        `SELECT project_id FROM project_members WHERE user_id = $1`,
-        [user.userId],
-      );
-      for (const proj of projects) {
-        client.join(this.realtimeEvents.projectRoom(proj.project_id));
+      // Auto-join project rooms via TypeORM
+      const projectMemberships = await this.membersRepo.find({
+        where: { user_id: user.userId },
+        select: { project_id: true },
+      });
+      for (const pm of projectMemberships) {
+        client.join(this.realtimeEvents.projectRoom(pm.project_id));
       }
 
-      // NOTE: Do NOT auto-join conversation rooms here.
-      // Conversation rooms are joined explicitly via room.conversation.join
-      // when the user opens a chat page. This allows isUserInRoom() to
-      // accurately detect whether the user is actively viewing the chat,
-      // which controls notification suppression.
+      // Conversation rooms are joined explicitly via room.conversation.join.
 
       this.logger.log(
-        `Socket OK: user=${user.userId} email=${user.email} rooms=[${userRoom}, ${projects.length} projects] sid=${client.id}`,
+        `Socket OK: user=${user.userId} email=${user.email} rooms=[${userRoom}, ${projectMemberships.length} projects] sid=${client.id}`,
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -116,14 +119,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   ) {
     const user = this.requireUser(client);
     const projectId = Number(payload?.projectId);
-
     if (!Number.isInteger(projectId)) {
       throw new WsException('projectId is required');
     }
-
     await this.projectAccess.assertMember(projectId, user.userId);
     client.join(this.realtimeEvents.projectRoom(projectId));
-
     return { projectId, joined: true };
   }
 
@@ -136,29 +136,37 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const user = this.requireUser(client);
       const conversationId = Number(payload?.conversationId);
-
-      this.logger.log(`room.conversation.join request: user=${user.userId}, conversationId=${conversationId}`);
+      this.logger.log(
+        `room.conversation.join request: user=${user.userId}, conversationId=${conversationId}`,
+      );
 
       if (!Number.isInteger(conversationId)) {
-        this.logger.warn(`Invalid conversationId from user ${user.userId}: ${payload?.conversationId}`);
+        this.logger.warn(
+          `Invalid conversationId from user ${user.userId}: ${payload?.conversationId}`,
+        );
         return { error: 'conversationId is required' };
       }
 
-      const { rows } = await this.db.query(
-        `SELECT 1
-         FROM direct_conversations
-         WHERE conversation_id = $1 AND (user_one_id = $2 OR user_two_id = $2)`,
-        [conversationId, user.userId],
-      );
+      const exists = await this.conversationsRepo
+        .createQueryBuilder('dc')
+        .where(
+          'dc.conversation_id = :conversationId AND (dc.user_one_id = :userId OR dc.user_two_id = :userId)',
+          { conversationId, userId: user.userId },
+        )
+        .getCount();
 
-      if (rows.length === 0) {
-        this.logger.warn(`Conversation ${conversationId} not found for user ${user.userId}`);
+      if (!exists) {
+        this.logger.warn(
+          `Conversation ${conversationId} not found for user ${user.userId}`,
+        );
         return { error: 'Conversation not found' };
       }
 
       const room = this.realtimeEvents.conversationRoom(conversationId);
       client.join(room);
-      this.logger.log(`User ${user.userId} joined room ${room} (socket ${client.id})`);
+      this.logger.log(
+        `User ${user.userId} joined room ${room} (socket ${client.id})`,
+      );
       return { conversationId, joined: true };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -175,11 +183,9 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   ) {
     const user = this.requireUser(client);
     const conversationId = Number(payload?.conversationId);
-
     if (!Number.isInteger(conversationId)) {
       return { error: 'conversationId is required' };
     }
-
     const room = this.realtimeEvents.conversationRoom(conversationId);
     client.leave(room);
     this.logger.log(`User ${user.userId} left room ${room}`);
@@ -188,9 +194,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   private requireUser(client: SocketWithUser): SocketJwtPayload {
     const user = client.data.user;
-    if (!user) {
-      throw new WsException('Unauthorized socket connection');
-    }
+    if (!user) throw new WsException('Unauthorized socket connection');
     return user;
   }
 }

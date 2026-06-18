@@ -1,84 +1,110 @@
 import {
-  Injectable,
   ConflictException,
-  UnauthorizedException,
+  Injectable,
   Logger,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as jwt from 'jsonwebtoken';
-import { DatabaseService } from '../database/database.service';
+import { User } from '../entities';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger('AuthService');
 
   constructor(
-    private db: DatabaseService,
-    private config: ConfigService,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
+    private readonly config: ConfigService,
   ) {}
 
   async register(email: string, password: string, displayName: string) {
-    this.logger.log(`Register attempt: ${email}`);
+    const normalizedEmail = email.toLowerCase();
+    this.logger.log(`Register attempt: ${normalizedEmail}`);
 
-    const existing = await this.db.query(
-      'SELECT user_id FROM users WHERE email = $1',
-      [email.toLowerCase()],
-    );
-    if (existing.rows.length > 0) {
-      throw new ConflictException('Email already registered');
-    }
+    const existing = await this.usersRepo.findOne({
+      where: { email: normalizedEmail },
+      select: { user_id: true },
+    });
+    if (existing) throw new ConflictException('Email already registered');
 
     const rounds = parseInt(String(this.config.get('BCRYPT_ROUNDS', '12')), 10);
     const passwordHash = await bcrypt.hash(password, rounds);
 
-    const { rows } = await this.db.query(
-      `INSERT INTO users (email, password, display_name)
-       VALUES ($1, $2, $3)
-       RETURNING user_id, email, display_name, created_at`,
-      [email.toLowerCase(), passwordHash, displayName],
-    );
+    const entity = this.usersRepo.create({
+      email: normalizedEmail,
+      password: passwordHash,
+      display_name: displayName,
+    });
+    const saved = await this.usersRepo.save(entity);
 
-    const user = rows[0];
+    const user = {
+      user_id: saved.user_id,
+      email: saved.email,
+      display_name: saved.display_name,
+      created_at: saved.created_at,
+    };
     const token = this.generateToken(user.user_id, user.email);
-    this.logger.log(`Register success: ${email}`);
+    this.logger.log(`Register success: ${normalizedEmail}`);
     return { user, token };
   }
 
   async login(email: string, password: string) {
-    this.logger.log(`Login attempt: ${email}`);
+    const normalizedEmail = email.toLowerCase();
+    this.logger.log(`Login attempt: ${normalizedEmail}`);
 
-    const { rows } = await this.db.query(
-      'SELECT user_id, email, display_name, password FROM users WHERE email = $1',
-      [email.toLowerCase()],
-    );
-
-    if (rows.length === 0) {
-      this.logger.warn(`Login failed (no user): ${email}`);
+    const user = await this.usersRepo.findOne({
+      where: { email: normalizedEmail },
+      select: {
+        user_id: true,
+        email: true,
+        display_name: true,
+        password: true,
+      },
+    });
+    if (!user) {
+      this.logger.warn(`Login failed (no user): ${normalizedEmail}`);
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    const user = rows[0];
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
-      this.logger.warn(`Login failed (bad password): ${email}`);
+      this.logger.warn(`Login failed (bad password): ${normalizedEmail}`);
       throw new UnauthorizedException('Invalid email or password');
     }
 
     const token = this.generateToken(user.user_id, user.email);
-    const { password: _, ...safeUser } = user;
-    this.logger.log(`Login success: ${email}`);
+    const { password: _drop, ...safeUser } = user;
+    void _drop;
+    this.logger.log(`Login success: ${normalizedEmail}`);
     return { user: safeUser, token };
   }
 
   async getCurrentUser(userId: number, email: string) {
-    const { rows } = await this.db.query(
-      `SELECT user_id, email, display_name, avatar_url, bio, theme, timezone, language,
-               job_title, location, website_url, notification_settings, created_at, updated_at
-       FROM users WHERE user_id = $1 AND email = $2`,
-      [userId, email.toLowerCase()],
+    return (
+      (await this.usersRepo.findOne({
+        where: { user_id: userId, email: email.toLowerCase() },
+        select: {
+          user_id: true,
+          email: true,
+          display_name: true,
+          avatar_url: true,
+          bio: true,
+          theme: true,
+          timezone: true,
+          language: true,
+          job_title: true,
+          location: true,
+          website_url: true,
+          notification_settings: true,
+          created_at: true,
+          updated_at: true,
+        },
+      })) || null
     );
-    return rows[0] || null;
   }
 
   private generateToken(userId: number, email: string): string {

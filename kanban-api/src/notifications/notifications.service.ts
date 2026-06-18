@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Notification } from '../entities';
 import { RealtimeEventsService } from '../realtime/realtime-events.service';
 
 interface CreateNotificationInput {
@@ -15,64 +17,49 @@ interface CreateNotificationInput {
 @Injectable()
 export class NotificationsService {
   constructor(
-    private readonly db: DatabaseService,
+    @InjectRepository(Notification)
+    private readonly notificationsRepo: Repository<Notification>,
     private readonly realtimeEvents: RealtimeEventsService,
   ) {}
 
   async createNotification(input: CreateNotificationInput) {
-    const { rows } = await this.db.query(
-      `INSERT INTO notifications (
-        user_id, type, title, body, entity_type, entity_id, metadata
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *`,
-      [
-        input.userId,
-        input.type,
-        input.title,
-        input.body,
-        input.entityType || null,
-        input.entityId || null,
-        input.metadata ? JSON.stringify(input.metadata) : JSON.stringify({}),
-      ],
-    );
-
-    const notification = rows[0];
+    const entity = this.notificationsRepo.create({
+      user_id: input.userId,
+      type: input.type,
+      title: input.title,
+      body: input.body,
+      entity_type: input.entityType ?? null,
+      entity_id: input.entityId ?? null,
+      metadata: input.metadata ?? {},
+    });
+    const notification = await this.notificationsRepo.save(entity);
     this.realtimeEvents.emitToUser(input.userId, 'notification.received', notification);
     return notification;
   }
 
   async listNotifications(userId: number, limit = 5) {
     const safeLimit = limit === 10 ? 10 : 5;
-    const { rows } = await this.db.query(
-      `SELECT *
-       FROM notifications
-       WHERE user_id = $1
-       ORDER BY created_at DESC
-       LIMIT $2`,
-      [userId, safeLimit],
-    );
-
-    return rows;
+    return this.notificationsRepo.find({
+      where: { user_id: userId },
+      order: { created_at: 'DESC' },
+      take: safeLimit,
+    });
   }
 
   async markAsRead(userId: number, notificationId: number) {
-    const { rows } = await this.db.query(
-      `UPDATE notifications
-       SET is_read = TRUE, read_at = NOW()
-       WHERE notification_id = $1 AND user_id = $2
-       RETURNING *`,
-      [notificationId, userId],
-    );
-
-    if (rows.length === 0) {
+    const notification = await this.notificationsRepo.findOne({
+      where: { notification_id: notificationId, user_id: userId },
+    });
+    if (!notification) {
       throw new NotFoundException('Notification not found');
     }
+    notification.is_read = true;
+    notification.read_at = new Date();
+    const updated = await this.notificationsRepo.save(notification);
 
-    const notification = rows[0];
     this.realtimeEvents.emitToUser(userId, 'notification.read', {
-      notification_id: notification.notification_id,
+      notification_id: updated.notification_id,
     });
-
-    return notification;
+    return updated;
   }
 }

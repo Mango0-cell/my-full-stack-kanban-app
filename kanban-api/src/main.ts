@@ -10,6 +10,14 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Disable Express ETag: avoids 304 Not Modified being served on mutations
+  // that hit the same URL twice in quick succession (was breaking
+  // DELETE /projects/:id/canceled/cards/:cid in particular).
+  const expressInstance = app.getHttpAdapter().getInstance() as {
+    set?: (k: string, v: unknown) => void;
+  };
+  expressInstance.set?.('etag', false);
+
   const config = app.get(ConfigService);
   const port = config.get<number>('PORT', 3001);
   const nodeEnv = config.get<string>('NODE_ENV', 'development');
@@ -35,6 +43,13 @@ async function bootstrap() {
     crossOriginOpenerPolicy: false,
   }));
   app.use(morgan(nodeEnv === 'production' ? 'combined' : 'dev'));
+
+  // Force API responses to be uncacheable so DELETE/POST/PUT never get
+  // misinterpreted as cacheable by browsers or intermediaries.
+  app.use((_req: unknown, res: { setHeader: (k: string, v: string) => void }, next: () => void) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    next();
+  });
 
   app.setGlobalPrefix('api');
   app.useGlobalFilters(new AllExceptionsFilter());

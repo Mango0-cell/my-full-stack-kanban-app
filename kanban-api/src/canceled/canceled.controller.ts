@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseIntPipe,
   Post,
@@ -61,6 +63,7 @@ export class CanceledController {
   }
 
   @Delete('cards/:canceledCardId')
+  @HttpCode(HttpStatus.OK)
   async deleteCanceledCard(
     @Param('id', ParseIntPipe) id: number,
     @Param('canceledCardId', ParseIntPipe) canceledCardId: number,
@@ -71,6 +74,7 @@ export class CanceledController {
   }
 
   @Delete('groups/:groupId')
+  @HttpCode(HttpStatus.OK)
   async deleteCanceledGroup(
     @Param('id', ParseIntPipe) id: number,
     @Param('groupId', ParseIntPipe) groupId: number,

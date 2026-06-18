@@ -4,20 +4,29 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { DirectConversation, DirectMessage, User } from '../entities';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeEventsService } from '../realtime/realtime-events.service';
 
 @Injectable()
 export class ChatService {
   constructor(
-    private readonly db: DatabaseService,
+    @InjectRepository(DirectConversation)
+    private readonly conversationsRepo: Repository<DirectConversation>,
+    @InjectRepository(DirectMessage)
+    private readonly messagesRepo: Repository<DirectMessage>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
+    private readonly dataSource: DataSource,
     private readonly notificationsService: NotificationsService,
     private readonly realtimeEvents: RealtimeEventsService,
   ) {}
 
   async listConversations(userId: number) {
-    const { rows } = await this.db.query(
+    // LEFT JOIN LATERAL is best expressed as raw SQL via the DataSource.
+    return this.dataSource.query(
       `SELECT dc.conversation_id,
               dc.updated_at,
               CASE WHEN dc.user_one_id = $1 THEN dc.user_two_id ELSE dc.user_one_id END AS other_user_id,
@@ -42,29 +51,26 @@ export class ChatService {
        ORDER BY COALESCE(lm.created_at, dc.updated_at) DESC`,
       [userId],
     );
-
-    return rows;
   }
 
   async listMessages(conversationId: number, userId: number) {
     await this.assertConversationMember(conversationId, userId);
 
-    const { rows } = await this.db.query(
-      `SELECT dm.message_id,
-              dm.conversation_id,
-              dm.sender_user_id,
-              dm.content,
-              dm.created_at,
-              u.display_name AS sender_display_name,
-              u.avatar_url AS sender_avatar_url
-       FROM direct_messages dm
-       JOIN users u ON u.user_id = dm.sender_user_id
-       WHERE dm.conversation_id = $1
-       ORDER BY dm.created_at ASC`,
-      [conversationId],
-    );
-
-    return rows;
+    return this.messagesRepo
+      .createQueryBuilder('dm')
+      .innerJoin('dm.sender', 'u')
+      .where('dm.conversation_id = :conversationId', { conversationId })
+      .orderBy('dm.created_at', 'ASC')
+      .select([
+        'dm.message_id AS message_id',
+        'dm.conversation_id AS conversation_id',
+        'dm.sender_user_id AS sender_user_id',
+        'dm.content AS content',
+        'dm.created_at AS created_at',
+        'u.display_name AS sender_display_name',
+        'u.avatar_url AS sender_avatar_url',
+      ])
+      .getRawMany();
   }
 
   async sendMessage(input: {
@@ -107,37 +113,33 @@ export class ChatService {
       throw new BadRequestException('Direct conversation recipient not found');
     }
 
-    const { rows } = await this.db.query(
-      `INSERT INTO direct_messages (conversation_id, sender_user_id, content)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [conversationId, input.senderUserId, content],
+    const entity = this.messagesRepo.create({
+      conversation_id: conversationId,
+      sender_user_id: input.senderUserId,
+      content,
+    });
+    const savedMessage = await this.messagesRepo.save(entity);
+
+    await this.conversationsRepo.update(
+      { conversation_id: conversationId },
+      { updated_at: new Date() },
     );
 
-    await this.db.query(
-      'UPDATE direct_conversations SET updated_at = NOW() WHERE conversation_id = $1',
-      [conversationId],
-    );
+    const sender = await this.usersRepo.findOne({
+      where: { user_id: input.senderUserId },
+      select: { display_name: true, avatar_url: true },
+    });
 
-    // Enrich message with sender info for socket consumers
-    const senderResult = await this.db.query(
-      'SELECT display_name, avatar_url FROM users WHERE user_id = $1',
-      [input.senderUserId],
-    );
     const message = {
-      ...rows[0],
-      sender_display_name: senderResult.rows[0]?.display_name ?? null,
-      sender_avatar_url: senderResult.rows[0]?.avatar_url ?? null,
+      ...savedMessage,
+      sender_display_name: sender?.display_name ?? null,
+      sender_avatar_url: sender?.avatar_url ?? null,
     };
 
-    // Emit to conversation room (for users with the chat page open)
     this.realtimeEvents.emitToConversation(conversationId, 'chat.message.received', message);
-    // Also emit to recipient's user room (so they get it even if not on the chat page)
     this.realtimeEvents.emitToUser(recipientUserId, 'chat.message.received', message);
-    // Emit to sender's user room
     this.realtimeEvents.emitToUser(input.senderUserId, 'chat.message.sent', message);
 
-    // Mute notification if recipient is currently viewing this conversation
     const convRoom = this.realtimeEvents.conversationRoom(conversationId);
     const recipientViewingChat = await this.realtimeEvents.isUserInRoom(
       convRoom,
@@ -163,7 +165,7 @@ export class ChatService {
 
   async deleteConversation(conversationId: number, userId: number) {
     await this.assertConversationMember(conversationId, userId);
-    await this.db.query('DELETE FROM direct_conversations WHERE conversation_id = $1', [conversationId]);
+    await this.conversationsRepo.delete({ conversation_id: conversationId });
   }
 
   async findOrCreatePublic(senderUserId: number, recipientUserId: number) {
@@ -177,53 +179,41 @@ export class ChatService {
 
     const [userOneId, userTwoId] = [senderUserId, recipientUserId].sort((a, b) => a - b);
 
-    const { rows } = await this.db.query(
+    // ON CONFLICT requires raw SQL — keeps the original UPSERT semantics.
+    const rows = (await this.dataSource.query(
       `INSERT INTO direct_conversations (user_one_id, user_two_id)
        VALUES ($1, $2)
        ON CONFLICT (user_one_id, user_two_id)
        DO UPDATE SET updated_at = NOW()
        RETURNING conversation_id`,
       [userOneId, userTwoId],
-    );
+    )) as { conversation_id: number }[];
 
-    return rows[0].conversation_id as number;
+    return rows[0].conversation_id;
   }
 
   private async assertConversationMember(conversationId: number, userId: number) {
-    const { rows } = await this.db.query(
-      `SELECT 1
-       FROM direct_conversations
-       WHERE conversation_id = $1 AND (user_one_id = $2 OR user_two_id = $2)`,
-      [conversationId, userId],
-    );
-
-    if (rows.length === 0) {
-      throw new NotFoundException('Conversation not found');
-    }
+    const exists = await this.conversationsRepo
+      .createQueryBuilder('dc')
+      .where(
+        'dc.conversation_id = :conversationId AND (dc.user_one_id = :userId OR dc.user_two_id = :userId)',
+        { conversationId, userId },
+      )
+      .getCount();
+    if (!exists) throw new NotFoundException('Conversation not found');
   }
 
   private async assertUserExists(userId: number) {
-    const { rows } = await this.db.query(
-      'SELECT 1 FROM users WHERE user_id = $1',
-      [userId],
-    );
-    if (rows.length === 0) {
-      throw new NotFoundException('Recipient user not found');
-    }
+    const exists = await this.usersRepo.count({ where: { user_id: userId } });
+    if (!exists) throw new NotFoundException('Recipient user not found');
   }
 
   private async getConversationMembers(conversationId: number): Promise<number[]> {
-    const { rows } = await this.db.query(
-      `SELECT user_one_id, user_two_id
-       FROM direct_conversations
-       WHERE conversation_id = $1`,
-      [conversationId],
-    );
-
-    if (rows.length === 0) {
-      throw new NotFoundException('Conversation not found');
-    }
-
-    return [rows[0].user_one_id, rows[0].user_two_id] as number[];
+    const conv = await this.conversationsRepo.findOne({
+      where: { conversation_id: conversationId },
+      select: { user_one_id: true, user_two_id: true },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+    return [conv.user_one_id, conv.user_two_id];
   }
 }
