@@ -1,52 +1,52 @@
-@import "../styles/design-tokens.css";
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap');
 
-/* ── Shadcn dark-mode token overrides ── */
 :root {
-  --background: var(--color-surface-0);
-  --foreground: var(--color-text-primary);
-  --card: var(--color-surface-2);
-  --card-foreground: var(--color-text-primary);
-  --popover: #0d1017;
-  --popover-foreground: var(--color-text-primary);
-  --primary: var(--color-brand-500);
-  --primary-foreground: #ffffff;
-  --secondary: var(--color-surface-3);
-  --secondary-foreground: var(--color-text-primary);
-  --muted: var(--color-surface-1);
-  --muted-foreground: var(--color-text-secondary);
-  --accent: var(--color-surface-3);
-  --accent-foreground: var(--color-text-primary);
-  --destructive: var(--color-danger);
-  --destructive-foreground: #fecaca;
-  --border: var(--color-border);
-  --input: rgba(255, 255, 255, 0.05);
-  --ring: var(--color-brand-400);
-  --radius: 0.375rem;
+  --background: #ffffff;
+  --foreground: #171717;
+
+  /* Kanban Flow Pro design tokens */
+  --kf-primary: #c0c1ff;
+  --kf-secondary: #4edea3;
+  --kf-surface: #121315;
+  --kf-surface-dim: #08090a;
+  --kf-surface-container: #1f2021;
+  --kf-surface-container-low: #1b1c1d;
+  --kf-surface-container-high: #292a2b;
+  --kf-surface-container-highest: #343536;
+  --kf-surface-container-lowest: #0d0e0f;
+  --kf-on-surface: #e3e2e3;
+  --kf-on-surface-variant: #c7c4d7;
+  --kf-outline: #908fa0;
+  --kf-outline-variant: #464554;
+  --kf-error: #ffb4ab;
+  --kf-on-secondary-container: #00311f;
+  --kf-focus-glow: 0 0 15px rgba(78, 222, 163, 0.15);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-jakarta), 'Plus Jakarta Sans', sans-serif;
-  --font-mono: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
 }
 
 body {
-  background: var(--color-surface-0);
-  color: var(--color-text-primary);
-  font-family: var(--font-jakarta), 'Plus Jakarta Sans', sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
 }
 
-/* ── Board scrollbar (thin, dark) ── */
-.kanban-scroll::-webkit-scrollbar { height: 4px; width: 4px; }
-.kanban-scroll::-webkit-scrollbar-track { background: transparent; }
-.kanban-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
-.kanban-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-
-/* ── Auth page custom classes ── */
+/* Auth page custom classes */
 .kf-mono-label {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.625rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -57,26 +57,25 @@ body {
   background: rgba(255, 255, 255, 0.02);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--color-border);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .kf-auth-field {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.05);
-  transition: border-color 0.25s var(--ease-smooth), box-shadow 0.25s var(--ease-smooth), background-color 0.25s var(--ease-smooth);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Only highlight when the actual input is focused — not when the eye-toggle button is tapped */
-.kf-auth-field:has(input:focus) {
-  border-color: var(--color-brand-500);
-  box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+.kf-auth-field:focus-within {
+  border-color: var(--kf-secondary);
+  box-shadow: var(--kf-focus-glow);
   background: rgba(255, 255, 255, 0.05);
 }
 
 .kf-mesh-gradient {
   background:
-    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.08) 0, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(129, 140, 248, 0.05) 0, transparent 50%);
+    radial-gradient(at 0% 0%, hsla(192, 95%, 68%, 0.1) 0, transparent 50%),
+    radial-gradient(at 100% 100%, hsla(240, 100%, 87%, 0.05) 0, transparent 50%);
 }
 
 .kf-inner-glow {
@@ -84,104 +83,13 @@ body {
 }
 
 .kf-btn {
-  transition: all 0.15s var(--ease-out);
-}
-.kf-btn:hover { filter: brightness(1.1); }
-.kf-btn:active { transform: scale(0.97); }
-
-/* ── Board card ── */
-.kf-card {
-  background: var(--color-surface-2);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 10px;
-  padding: 1rem;
-  cursor: grab;
-  box-shadow: var(--shadow-card);
-  transition: all 200ms var(--ease-smooth);
-}
-.kf-card:hover {
-  background: var(--color-surface-3);
-  border-color: rgba(255, 255, 255, 0.12);
-  box-shadow: var(--shadow-card-hover);
-  transform: translateY(-2px);
-}
-.kf-card:active { cursor: grabbing; }
-.kf-card--active {
-  border-color: rgba(99, 102, 241, 0.5);
-  box-shadow: var(--shadow-drag);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ── Column ── */
-.kf-column {
-  background: var(--color-surface-1);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 14px;
-  transition: all 200ms var(--ease-smooth);
-}
-.kf-column--drop-active {
-  background: rgba(99, 102, 241, 0.08);
-  border: 1.5px dashed rgba(99, 102, 241, 0.4);
+.kf-btn:hover {
+  filter: brightness(1.1);
 }
 
-/* ── Icon button ── */
-.kf-icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  background: var(--color-surface-3);
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  transition: all 150ms var(--ease-out);
-}
-.kf-icon-btn:hover {
-  background: var(--color-surface-4);
-  color: var(--color-text-primary);
-}
-
-/* ── Float animation ── */
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
-}
-
-/* ── Shimmer skeleton ── */
-@keyframes shimmer {
-  0%   { background-position: -200% center; }
-  100% { background-position:  200% center; }
-}
-.shimmer {
-  background: linear-gradient(90deg,
-    var(--color-surface-2) 25%,
-    var(--color-surface-3) 50%,
-    var(--color-surface-2) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
-/* ── Landing page gradient vars ── */
-@layer base {
-  :root {
-    --gradient-color: #6366f1;
-    --sparkles-color: #6366f1;
-  }
-}
-
-/* ── Gradual blur helper ── */
-.gradual-blur { pointer-events: none; transition: opacity 0.3s ease-out; }
-.gradual-blur-inner { pointer-events: none; }
-
-/* ── Typing bounce (chat) ── */
-@keyframes typingBounce {
-  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-  30% { transform: translateY(-3px); opacity: 1; }
-}
-
-/* ── Reduced motion ── */
-@media (prefers-reduced-motion: reduce) {
-  *, ::before, ::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
+.kf-btn:active {
+  transform: scale(0.98);
 }
