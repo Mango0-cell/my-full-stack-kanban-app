@@ -247,7 +247,16 @@ export default function BoardPage({ params }: Props) {
           {/* Filter dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="kf-icon-btn relative">
+              <button className="flex items-center justify-center w-8 h-8 rounded-md transition-colors relative"
+                style={{ background: 'var(--color-surface-3)', color: 'var(--color-text-secondary)' }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-surface-4)';
+                  e.currentTarget.style.color = 'var(--color-text-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--color-surface-3)';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
+                }}>
                 <Filter className="h-4 w-4" />
                 {filterMode !== 'all' && (
                   <span
@@ -282,7 +291,16 @@ export default function BoardPage({ params }: Props) {
 
           {/* Search toggle */}
           <button
-            className="kf-icon-btn"
+            className="flex items-center justify-center w-8 h-8 rounded-md transition-colors"
+            style={{ background: 'var(--color-surface-3)', color: 'var(--color-text-secondary)' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'var(--color-surface-4)';
+              e.currentTarget.style.color = 'var(--color-text-primary)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'var(--color-surface-3)';
+              e.currentTarget.style.color = 'var(--color-text-secondary)';
+            }}
             onClick={() => {
               setSearchOpen((prev) => !prev);
               if (searchOpen) setSearchQuery('');
@@ -294,7 +312,18 @@ export default function BoardPage({ params }: Props) {
           {/* Settings dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="kf-icon-btn">
+              <button
+                className="flex items-center justify-center w-8 h-8 rounded-md transition-colors"
+                style={{ background: 'var(--color-surface-3)', color: 'var(--color-text-secondary)' }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-surface-4)';
+                  e.currentTarget.style.color = 'var(--color-text-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--color-surface-3)';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
+                }}
+              >
                 <Settings className="h-4 w-4" />
               </button>
             </DropdownMenuTrigger>

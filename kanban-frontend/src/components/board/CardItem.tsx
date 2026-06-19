@@ -30,10 +30,18 @@ export function CardItem({ card, onClick, commentCount = 0, userRole }: CardItem
     isDragging,
   } = useSortable({ id: card.card_id, data: { type: 'card', card }, disabled: isViewer });
 
-  const style = {
+  const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.4 : 1,
+    background: 'var(--color-surface-2)',
+    border: '1px solid rgba(255, 255, 255, 0.07)',
+    borderRadius: 10,
+    padding: '1rem',
+    cursor: isDragging ? 'grabbing' : 'grab',
+    boxShadow: isDragging
+      ? '0 16px 40px rgba(0,0,0,0.6), 0 0 0 2px rgba(99,102,241,0.5)'
+      : '0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.06)',
   };
 
   const priority = priorityConfig[card.priority as keyof typeof priorityConfig] ?? {
@@ -52,7 +60,7 @@ export function CardItem({ card, onClick, commentCount = 0, userRole }: CardItem
       {...attributes}
       {...listeners}
       onClick={() => onClick(card)}
-      className={`kf-card select-none group border-l-[3px] ${priority.border} ${isDragging ? 'kf-card--active' : ''}`}
+      className={`select-none group border-l-[3px] ${priority.border} transition-all duration-200 hover:-translate-y-0.5`}
       role="article"
       aria-label={card.title}
       tabIndex={0}
@@ -114,8 +122,15 @@ export function CardDragOverlay({ card }: { card: Card }) {
     labelClass: 'bg-purple-500/15 text-purple-400 border-purple-500/25',
   };
   return (
-    <div className={`w-[280px] rotate-[1.5deg] scale-[1.03] select-none kf-card kf-card--active border-l-[3px] ${priority.border}`}
-         style={{ opacity: 0.95 }}>
+    <div className={`w-[280px] rotate-[1.5deg] scale-[1.03] select-none border-l-[3px] ${priority.border}`}
+         style={{
+           opacity: 0.95,
+           background: 'var(--color-surface-2)',
+           border: '1px solid rgba(99,102,241,0.5)',
+           borderRadius: 10,
+           padding: '1rem',
+           boxShadow: '0 16px 40px rgba(0,0,0,0.6), 0 0 0 2px rgba(99,102,241,0.5)',
+         }}>
       <div className="flex items-center gap-2 mb-2">
         <span className={`inline-flex items-center text-[11px] font-medium uppercase tracking-wide px-2 py-0.5 rounded-sm border ${priority.labelClass}`}
               style={{ fontFamily: 'var(--font-mono)' }}>

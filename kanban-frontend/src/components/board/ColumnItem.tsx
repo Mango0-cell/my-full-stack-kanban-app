@@ -64,7 +64,14 @@ export function ColumnItem({
 
   return (
     <div
-      className={`flex flex-col w-[280px] shrink-0 kf-column ${isOver ? 'kf-column--drop-active' : ''}`}
+      className="flex flex-col w-[280px] shrink-0 transition-all duration-200"
+      style={{
+        background: isOver ? 'rgba(99, 102, 241, 0.08)' : 'var(--color-surface-1)',
+        border: isOver
+          ? '1.5px dashed rgba(99, 102, 241, 0.4)'
+          : '1px solid rgba(255, 255, 255, 0.06)',
+        borderRadius: 14,
+      }}
       role="region"
       aria-label={`${column.name}, ${cards.length} cards`}
     >
