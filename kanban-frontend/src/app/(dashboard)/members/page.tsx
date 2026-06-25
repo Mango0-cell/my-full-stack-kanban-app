@@ -287,17 +287,19 @@ export default function MembersPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Main member list */}
         <div className="lg:col-span-8">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
             <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
               {activeProject?.project_name ?? 'Project members'}
             </h2>
             {isAdminOrOwner && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-shrink-0">
                 <ActionButton onClick={() => setExternalInviteOpen(true)} variant="secondary">
-                  Invite external member
+                  <span className="sm:hidden">Invite</span>
+                  <span className="hidden sm:inline">Invite external member</span>
                 </ActionButton>
                 <ActionButton onClick={() => setInternalInviteOpen(true)} variant="primary">
-                  Add member
+                  <span className="sm:hidden">Add</span>
+                  <span className="hidden sm:inline">Add member</span>
                 </ActionButton>
               </div>
             )}
