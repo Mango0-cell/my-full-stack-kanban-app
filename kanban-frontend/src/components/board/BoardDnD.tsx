@@ -8,6 +8,7 @@ import {
   DragOverlay,
   DragStartEvent,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   pointerWithin,
@@ -114,7 +115,9 @@ export function BoardDnD({
   const [activeCard, setActiveCard] = useState<Card | null>(null);
 
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 5 } });
-  const defaultSensors = useSensors(pointerSensor);
+  // TouchSensor with a 250ms hold lets mobile users distinguish a tap (open card) from a drag
+  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } });
+  const defaultSensors = useSensors(pointerSensor, touchSensor);
   const noSensors = useSensors();
   const sensors = isViewer ? noSensors : defaultSensors;
 
