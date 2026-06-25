@@ -16,7 +16,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="hidden md:flex relative z-10">
           <Sidebar />
         </div>
-        <main className="flex-1 overflow-auto pb-16 md:pb-0 relative z-10">
+        <main className="flex-1 overflow-auto relative z-10">
           <RouteTransition>{children}</RouteTransition>
         </main>
       </div>

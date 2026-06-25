@@ -17,7 +17,7 @@ export function MobileBottomNav() {
 
   return (
     <nav
-      className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-around items-center h-16 px-6"
+      className="md:hidden flex justify-around items-center h-16 px-6"
       style={{
         backgroundColor: 'rgba(15,17,23,0.92)',
         backdropFilter: 'blur(12px)',
