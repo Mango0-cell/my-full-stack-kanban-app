@@ -30,10 +30,11 @@ export function CardItem({ card, onClick, commentCount = 0, userRole }: CardItem
     isDragging,
   } = useSortable({ id: card.card_id, data: { type: 'card', card }, disabled: isViewer });
 
+  const opacityTransition = 'opacity 120ms ease';
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.4 : 1,
+    transition: transition ? `${transition}, ${opacityTransition}` : opacityTransition,
+    opacity: isDragging ? 0.35 : 1,
     background: 'var(--color-surface-2)',
     border: '1px solid rgba(255, 255, 255, 0.07)',
     borderRadius: 10,

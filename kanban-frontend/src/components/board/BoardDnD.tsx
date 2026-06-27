@@ -146,7 +146,9 @@ export function BoardDnD({
     if (active.data.current?.type === 'card') {
       isDraggingRef.current = true;
       setActiveCard(active.data.current.card as Card);
-      setLocalCards([...allCards]);
+      // Seed localCards in position-sorted order so the visual order doesn't
+      // change the instant the drag starts (allCards may be in API-return order).
+      setLocalCards([...allCards].sort((a, b) => a.position - b.position));
     }
   }
 
