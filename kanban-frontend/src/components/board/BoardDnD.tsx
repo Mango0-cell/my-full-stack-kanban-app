@@ -230,6 +230,7 @@ export function BoardDnD({
         cardId: movedCard.card_id,
         columnId: movedCard.column_id,
         position: newPosition,
+        projectId,
       });
     } catch {
       // RTK Query will re-fetch from server on error
