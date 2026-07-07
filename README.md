@@ -1,6 +1,6 @@
 # Kanban App
 
-Aplicacion full-stack para gestion de proyectos tipo Kanban. Incluye autenticacion, tableros por proyecto, columnas, tarjetas, comentarios, adjuntos, archivo/cancelados, miembros, invitaciones, notificaciones y chat en tiempo real.
+Aplicación full-stack para gestión de proyectos tipo Kanban. Incluye autenticacion, tableros por proyecto, columnas, tarjetas, comentarios, adjuntos, archivo/cancelados, miembros, invitaciones, notificaciones y chat en tiempo real.
 
 ## Contenido
 
