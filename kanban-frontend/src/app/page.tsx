@@ -10,6 +10,7 @@ const Plasma = dynamic(() => import("@/components/ui/plasma"), { ssr: false });
 import Stepper, { Step } from "@/components/ui/stepper";
 import PricingSection4 from "@/components/ui/pricing-section-4";
 import { LayoutGrid, Zap, Users, ArrowRight, CheckCircle2 } from "lucide-react";
+import { useIsMobile } from "@/lib/hooks/useIsMobile";
 
 const sectionVariants = {
   hidden: { opacity: 0, y: 48 },
@@ -21,18 +22,35 @@ const sectionVariants = {
 };
 
 export default function LandingPage() {
+  // Mobile GPUs choke on the fullscreen WebGL plasma (60 shader iterations per
+  // pixel every frame, behind translucent scroll overlays). Render it on
+  // desktop only; mobile gets a static, GPU-cheap gradient instead. `null`
+  // (pre-detection) renders neither, keeping desktop byte-identical to before.
+  const isMobile = useIsMobile();
+
   return (
     <div className="min-h-screen text-slate-100 overflow-x-hidden" style={{ backgroundColor: '#0a0c12' }}>
-      {/* ── Plasma — fixed full-page WebGL background ── */}
+      {/* ── Background: animated WebGL plasma (desktop) / static gradient (mobile) ── */}
       <div className="fixed inset-0 z-0 pointer-events-none" style={{ willChange: 'transform' }}>
-        <Plasma
-          color="#6366f1"
-          speed={0.6}
-          direction="forward"
-          scale={1.1}
-          opacity={0.72}
-          mouseInteractive={false}
-        />
+        {isMobile === false && (
+          <Plasma
+            color="#6366f1"
+            speed={0.6}
+            direction="forward"
+            scale={1.1}
+            opacity={0.72}
+            mouseInteractive={false}
+          />
+        )}
+        {isMobile === true && (
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                'radial-gradient(ellipse 80% 60% at 50% 0%, rgba(99,102,241,0.20), transparent 60%), radial-gradient(ellipse 70% 60% at 85% 100%, rgba(139,92,246,0.14), transparent 55%), #0a0c12',
+            }}
+          />
+        )}
       </div>
 
       {/* ── Navbar (logo only) ── */}
