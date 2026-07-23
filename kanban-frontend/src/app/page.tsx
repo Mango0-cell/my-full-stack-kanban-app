@@ -1,25 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { motion } from "motion/react";
-import MagicBento from "@/components/ui/magic-bento";
-import BlurText from "@/components/ui/blur-text";
 import GradientText from "@/components/ui/gradient-text";
 import dynamic from "next/dynamic";
 const Plasma = dynamic(() => import("@/components/ui/plasma"), { ssr: false });
+// Below-the-fold, JS-heavy widgets (gsap / @number-flow). Code-split so their
+// bundles stay out of the initial hydration path; SSR keeps their content in
+// the HTML, so there is no layout shift.
+const MagicBento = dynamic(() => import("@/components/ui/magic-bento"));
+const PricingSection4 = dynamic(() => import("@/components/ui/pricing-section-4"));
 import Stepper, { Step } from "@/components/ui/stepper";
-import PricingSection4 from "@/components/ui/pricing-section-4";
 import { LayoutGrid, Zap, Users, ArrowRight, CheckCircle2 } from "lucide-react";
 import { useIsMobile } from "@/lib/hooks/useIsMobile";
-
-const sectionVariants = {
-  hidden: { opacity: 0, y: 48 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.9, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] },
-  },
-};
 
 export default function LandingPage() {
   // Mobile GPUs choke on the fullscreen WebGL plasma (60 shader iterations per
@@ -70,22 +62,15 @@ export default function LandingPage() {
             className="flex flex-wrap items-baseline justify-center gap-x-[0.18em]"
             style={{ fontSize: "clamp(4rem, 10vw, 7.5rem)" }}
           >
-            <BlurText
-              text="Kanban"
-              delay={150}
-              animateBy="words"
-              direction="top"
-              stepDuration={0.5}
-              threshold={0.01}
-              className="font-extrabold tracking-tight leading-none text-slate-100"
-            />
-            {/* Animate the GradientText wrapper — avoids will-change stacking-context breaking bg-clip */}
-            <motion.div
-              initial={{ filter: 'blur(10px)', opacity: 0, y: -50 }}
-              animate={{ filter: 'blur(0px)', opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.35, ease: [0.16, 1, 0.3, 1] }}
-              style={{ display: 'inline-block' }}
+            <span
+              className="hero-rise font-extrabold tracking-tight leading-none text-slate-100"
+              style={{ animationDelay: "0.05s" }}
             >
+              Kanban
+            </span>
+            {/* CSS blur-rise wrapper — keeps the reveal independent of the JS
+                bundle; GradientText still adds the animated shimmer once loaded. */}
+            <div className="hero-rise" style={{ display: "inline-block", animationDelay: "0.22s" }}>
               <GradientText
                 colors={["#818cf8", "#c4b5fd", "#f0abfc", "#6366f1", "#818cf8"]}
                 animationSpeed={5}
@@ -95,7 +80,7 @@ export default function LandingPage() {
                   Flow
                 </span>
               </GradientText>
-            </motion.div>
+            </div>
           </div>
 
           {/* Secondary: subtitle — plain white, no gradient */}
@@ -124,13 +109,9 @@ export default function LandingPage() {
       </section>
 
       {/* ── Features (split layout) ── */}
-      <motion.section
-        className="relative z-10 py-24 px-6"
+      <section
+        className="reveal-up relative z-10 py-24 px-6"
         style={{ background: 'rgba(10,12,18,0.88)' }}
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true, amount: 0.15 }}
-        variants={sectionVariants}
       >
         <div className="max-w-7xl mx-auto flex flex-col lg:flex-row items-center gap-16">
           {/* Left: text */}
@@ -171,27 +152,17 @@ export default function LandingPage() {
             <MagicBento enableStars enableSpotlight enableBorderGlow enableMagnetism clickEffect glowColor="99, 102, 241" />
           </div>
         </div>
-      </motion.section>
+      </section>
 
       {/* ── Pricing (full screen) ── */}
-      <motion.section
-        className="relative z-10"
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true, amount: 0.1 }}
-        variants={sectionVariants}
-      >
+      <section className="reveal-up relative z-10">
         <PricingSection4 />
-      </motion.section>
+      </section>
 
       {/* ── How it works ── */}
-      <motion.section
-        className="relative z-10 py-24 px-6"
+      <section
+        className="reveal-up relative z-10 py-24 px-6"
         style={{ background: 'rgba(10,12,18,0.88)' }}
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true, amount: 0.1 }}
-        variants={sectionVariants}
       >
         <div className="max-w-6xl mx-auto">
           {/* Header */}
@@ -307,7 +278,7 @@ export default function LandingPage() {
             </div>
           </div>
         </div>
-      </motion.section>
+      </section>
 
       {/* ── Footer ── */}
       <footer className="border-t border-white/[0.06] px-6 py-8 relative z-10" style={{ background: 'rgba(10,12,18,0.88)' }}>

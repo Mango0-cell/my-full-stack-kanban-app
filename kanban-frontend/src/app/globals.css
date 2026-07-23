@@ -248,6 +248,37 @@ body {
   30% { transform: translateY(-3px); opacity: 1; }
 }
 
+/* ── Landing entrance animations ──
+   Driven by CSS, not the JS bundle, so the hero and section content are
+   visible on the first paint instead of sitting at opacity:0 until
+   framer-motion/gsap finish hydrating (which caused the "content loads late
+   and jumps" behaviour on the landing page). */
+@keyframes kf-hero-rise {
+  from { opacity: 0; transform: translateY(-0.3em); filter: blur(10px); }
+  to   { opacity: 1; transform: translateY(0);      filter: blur(0); }
+}
+.hero-rise {
+  animation: kf-hero-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, filter, opacity;
+}
+
+@keyframes kf-reveal-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Scroll-driven section reveal: zero JavaScript. Where view() timelines are
+   unsupported (Firefox / older Safari) the rule simply does not apply and the
+   content stays fully visible — never trapped invisible waiting on JS. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal-up {
+      animation: kf-reveal-up linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 65%;
+    }
+  }
+}
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {
